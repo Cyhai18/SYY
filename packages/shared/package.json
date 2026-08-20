@@ -1,0 +1,18 @@
+{
+  "name": "@funtax/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@funtax/eslint-config": "workspace:*",
+    "@funtax/typescript-config": "workspace:*",
+    "eslint": "^9.32.0",
+    "typescript": "^5.8.3"
+  }
+}

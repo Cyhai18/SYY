@@ -1,0 +1,28 @@
+{
+  "name": "funtax",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:web": "pnpm --filter @funtax/web dev",
+    "dev:api": "pnpm --filter @funtax/api dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.1.2",
+    "prettier": "^3.6.2",
+    "turbo": "^2.5.5",
+    "typescript": "^5.8.3"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,css}": "prettier --write"
+  }
+}

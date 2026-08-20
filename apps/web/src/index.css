@@ -1,0 +1,123 @@
+:root {
+  --color-primary: oklch(51.93% 0.1712 260);
+  --color-secondary: oklch(77.26% 0.1268 231.1);
+  --color-accent: oklch(82.45% 0.1384 82.1);
+  --color-bg: oklch(98.14% 0.0045 258.3);
+  --color-title: oklch(27.76% 0.0341 255.8);
+  --color-body: oklch(54.44% 0.035 265.1);
+  --color-success: oklch(68.59% 0.1667 154.9);
+  --color-warning: oklch(74.69% 0.1701 62.1);
+  --color-surface: oklch(100% 0 0);
+  --space: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-title);
+  font-family: 'IBM Plex Sans', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  background: var(--color-surface);
+  border-bottom: 1px solid oklch(from var(--color-primary) l c h / 0.12);
+}
+
+.app-logo {
+  display: block;
+  height: 36px;
+  width: auto;
+}
+
+.app-logo--mobile {
+  display: none;
+  width: 36px;
+  height: 36px;
+}
+
+.app-main {
+  width: min(960px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: calc(var(--space) * 6) 0;
+}
+
+.app-hero {
+  display: grid;
+  gap: calc(var(--space) * 2);
+}
+
+.app-kicker {
+  margin: 0;
+  color: var(--color-primary);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-title {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.2;
+  text-wrap: pretty;
+}
+
+.app-copy {
+  margin: 0;
+  max-width: 42rem;
+  color: var(--color-body);
+  font-size: 16px;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.app-panel {
+  margin-top: calc(var(--space) * 4);
+}
+
+.app-footer {
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  color: var(--color-body);
+  font-size: 13px;
+}
+
+@media (max-width: 767px) {
+  .app-logo--desktop {
+    display: none;
+  }
+
+  .app-logo--mobile {
+    display: block;
+  }
+
+  .app-main {
+    padding-top: calc(var(--space) * 4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

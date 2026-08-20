@@ -1,0 +1,13 @@
+{
+  "extends": "@funtax/typescript-config/node.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false
+  },
+  "include": ["src"]
+}

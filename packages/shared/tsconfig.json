@@ -1,0 +1,7 @@
+{
+  "extends": "@funtax/typescript-config/base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src"]
+}
