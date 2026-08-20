@@ -1,13 +1,13 @@
 :root {
-  --color-primary: oklch(51.93% 0.1712 260);
-  --color-secondary: oklch(77.26% 0.1268 231.1);
-  --color-accent: oklch(82.45% 0.1384 82.1);
-  --color-bg: oklch(98.14% 0.0045 258.3);
-  --color-title: oklch(27.76% 0.0341 255.8);
-  --color-body: oklch(54.44% 0.035 265.1);
-  --color-success: oklch(68.59% 0.1667 154.9);
-  --color-warning: oklch(74.69% 0.1701 62.1);
-  --color-surface: oklch(100% 0 0);
+  --color-primary: #2563c9;
+  --color-secondary: #4fc3f7;
+  --color-accent: #f2bc4f;
+  --color-bg: #f7f9fc;
+  --color-title: #1d2939;
+  --color-body: #667085;
+  --color-success: #12b76a;
+  --color-warning: #f79009;
+  --color-surface: #ffffff;
   --space: 8px;
 }
 
@@ -41,7 +41,7 @@ body {
   gap: calc(var(--space) * 2);
   padding: calc(var(--space) * 2) calc(var(--space) * 3);
   background: var(--color-surface);
-  border-bottom: 1px solid oklch(from var(--color-primary) l c h / 0.12);
+  border-bottom: 1px solid rgb(from var(--color-primary) r g b / 0.12);
 }
 
 .app-logo {
@@ -52,8 +52,8 @@ body {
 
 .app-logo--mobile {
   display: none;
-  width: 36px;
   height: 36px;
+  width: auto;
 }
 
 .app-main {

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, ConfigProvider, Space, Tag, Typography } from 'antd';
 import { APP_NAME, type HealthResponse } from '@funtax/shared';
 import { antdTheme } from './theme';
-import pcLogo from '@brand/pc_logo.jpg';
-import mobileLogo from '@brand/mobile_logo.jpg';
+import pcLogo from '@brand/pc_logo.png';
+import mobileLogo from '@brand/mobile_logo.png';
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
