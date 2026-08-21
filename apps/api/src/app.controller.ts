@@ -10,7 +10,7 @@ export class AppController {
     return this.appService.getRoot();
   }
 
-  @Get('api/health')
+  @Get('health')
   getHealth() {
     return this.appService.getHealth();
   }

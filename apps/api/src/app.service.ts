@@ -4,9 +4,9 @@ import { Injectable } from '@nestjs/common';
 export class AppService {
   getRoot() {
     return {
-      name: 'FunTax',
+      name: '税驿云',
       service: 'api',
-      message: 'FunTax API is running.',
+      message: '税驿云 API is running.',
     };
   }
 

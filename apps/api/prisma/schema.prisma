@@ -8,3 +8,52 @@ generator client {
 datasource db {
   provider = "mysql"
 }
+
+enum Role {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+model User {
+  id            String         @id @default(uuid())
+  phone         String         @unique
+  password      String? // bcrypt 哈希，非明文；验证码登录用户可不设置
+  email         String?        @unique
+  nickname      String         @default("用户")
+  avatarUrl     String?
+  role          Role           @default(USER)
+  status        Int            @default(1) // 1 正常 0 禁用
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  actionLogs    ActionLog[]
+  refreshTokens RefreshToken[]
+}
+
+model ActionLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  detail    String?  @db.Text
+  ip        String?
+  userAgent String?  @db.Text
+  requestId String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([requestId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
