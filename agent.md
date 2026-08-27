@@ -1,18 +1,20 @@
 # FunTax Agent Notes
 
-跨境卖家税务 SaaS。当前只搭骨架：可访问的 Web index + API 健康检查。鉴权、客户画像、税引擎未实现。
+跨境卖家税务 SaaS。已实现手机号验证码/密码登录注册与个人中心。客户画像、税引擎尚未实现。
+
+新环境部署/启动的完整步骤见 `README.md`「新环境启动步骤」，本文件只记录架构决策与踩坑点，不重复维护操作步骤。
 
 ## 架构决策
 
-| 项     | 选择                                                 | 原因                                                                     |
-| ------ | ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| 后端   | NestJS 11 + TypeScript                               | 与前端同语言，模块边界清晰，后续 BullMQ / Prisma 接入成本低              |
-| 前端   | React 19 + Vite + Ant Design 6                       | 税务后台用 Ant Design 组件，禁止自绘 Button/Input/Table                  |
-| CSS    | 原生 CSS + hex token（antd 不支持 oklch seed token） | MVP 不用 Tailwind                                                        |
-| 数据库 | PostgreSQL 16 + Prisma 7（已接入客户端，未建表）     | JSONB 适配多国申报字段；强一致性；Prisma 类型安全 + 迁移体验优于 TypeORM |
-| 队列   | Redis + BullMQ（未接入）                             | 第三方申报异步任务                                                       |
-| 仓库   | pnpm + Turborepo                                     | `apps/web`、`apps/api`、`packages/shared`                                |
-| 鉴权   | JWT access + HttpOnly refresh（未实现）              | 邮箱密码登录；预留 MFA                                                   |
+| 项     | 选择                                                    | 原因                                                          |
+| ------ | ------------------------------------------------------- | ------------------------------------------------------------- |
+| 后端   | NestJS 11 + TypeScript                                  | 与前端同语言，模块边界清晰，后续 BullMQ / Prisma 接入成本低   |
+| 前端   | React 19 + Vite + Ant Design 6                          | 税务后台用 Ant Design 组件，禁止自绘 Button/Input/Table       |
+| CSS    | 原生 CSS + hex token（antd 不支持 oklch seed token）    | MVP 不用 Tailwind                                             |
+| 数据库 | MySQL + Prisma 7（已建表：User/ActionLog/RefreshToken） | JSON 适配多国申报字段；Prisma 类型安全 + 迁移体验优于 TypeORM |
+| 队列   | Redis + BullMQ（未接入）                                | 第三方申报异步任务                                            |
+| 仓库   | pnpm + Turborepo                                        | `apps/web`、`apps/api`、`packages/shared`                     |
+| 鉴权   | JWT access（内存）+ Refresh Token（HttpOnly Cookie）    | 手机号验证码/密码双模式登录；预留角色扩展（`Role` 枚举）      |
 
 工作区：
 
@@ -25,12 +27,12 @@ Nest watch 注意：`deleteOutDir` 必须为 `false`，否则增量编译会清�
 
 ## 数据库（Prisma）
 
-- `apps/api/prisma/schema.prisma`：数据模型定义，当前无业务表。
+- `apps/api/prisma/schema.prisma`：数据模型定义，已建表 `User` / `ActionLog` / `RefreshToken`（枚举 `Role`）。
 - `apps/api/prisma.config.ts`：读取 `DATABASE_URL`（`dotenv/config`）。
 - `apps/api/src/prisma/`：`PrismaModule`（`@Global`）+ `PrismaService`，已注入 `AppModule`。
-- `apps/api/.env`：本地真实连接串（已在 `.gitignore`，不提交）；`apps/api/.env.example` 为占位模板，默认 `postgres:postgres@localhost:5432/funtax`，需按本地实际情况修改。
-- 常用命令：`pnpm --filter @funtax/api prisma:generate` / `prisma:migrate` / `prisma:studio`。
-- 尚未建表，需先起本地 PostgreSQL 服务并核对 `.env` 再执行 `prisma migrate dev`。
+- `apps/api/.env`：本地真实连接串（已在 `.gitignore`，不提交）；`apps/api/.env.example` 为占位模板，需按本地实际情况修改。
+- 常用命令：`pnpm --filter @funtax/api prisma:generate` / `prisma:migrate` / `prisma:studio`。首次搭环境的完整步骤见 `README.md`。
+- **踩坑**：`schema.prisma` 是本地未提交文件被误改/覆盖的高发点（例如误跑 `prisma init` 会把已有模型定义整个清空成空模板）。若 API 编译报大量 `Property 'xxx' does not exist on type 'PrismaService'`，先用 `git diff apps/api/prisma/schema.prisma` 确认文件是否被意外改动，而不是怀疑模型定义丢失。
 
 ## 设计 Token（hex，以 `docs/message.md` 表格为准）
 
@@ -70,8 +72,9 @@ GET /api/health
 
 ## 本地启动
 
+完整步骤（含 `.env`、Prisma 建表）见 `README.md`「新环境启动步骤」。已配置好环境时，日常开发直接：
+
 ```bash
-pnpm install
 pnpm dev
 ```
 
@@ -82,9 +85,8 @@ pnpm dev
 
 ## 后续开发指南
 
-1. 核对/替换 `apps/api/.env` 中的数据库连接信息，起本地 PostgreSQL，跑 `prisma migrate dev` 建表。
-2. 设计业务数据模型（客户、税务主体等），再做 JWT 鉴权。
-3. 客户/税务主体 CRUD；税引擎与真实申报只留接口。
-4. 首批国家默认：DE / GB / JP；数据手填 + CSV 占位。
-5. 产品是核算与报送工具，不是税务意见；界面需免责声明。
-6. UI 只用 Ant Design；新色值统一写 hex（禁止把 oklch 字符串传给 antd `theme.token`，见上方“重要坑点”），且色值以 `docs/message.md` 表格为准；同时禁止 Inter / 紫粉渐变 / 左色条卡片。
+1. 设计业务数据模型（客户、税务主体等），在已实现的用户鉴权基础上扩展。
+2. 客户/税务主体 CRUD；税引擎与真实申报只留接口。
+3. 首批国家默认：DE / GB / JP；数据手填 + CSV 占位。
+4. 产品是核算与报送工具，不是税务意见；界面需免责声明。
+5. UI 只用 Ant Design；新色值统一写 hex（禁止把 oklch 字符串传给 antd `theme.token`，见上方“重要坑点”），且色值以 `docs/message.md` 表格为准；同时禁止 Inter / 紫粉渐变 / 左色条卡片。
