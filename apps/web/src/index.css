@@ -56,10 +56,33 @@ body {
   width: auto;
 }
 
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+}
+
+.app-nav-link {
+  color: var(--color-body);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.app-nav-link--active {
+  color: var(--color-primary);
+}
+
 .app-main {
   width: min(960px, calc(100% - 32px));
   margin: 0 auto;
   padding: calc(var(--space) * 6) 0;
+}
+
+.app-main:has(.clients-page),
+.app-main:has(.client-wizard-page) {
+  width: 100%;
+  padding: calc(var(--space) * 4) calc(var(--space) * 3);
 }
 
 .app-hero {
@@ -186,4 +209,49 @@ body {
 .profile-card {
   border-radius: 12px;
   height: 100%;
+}
+
+.clients-page {
+  width: min(1200px, calc(100% - 32px));
+  margin: 0 auto;
+  display: grid;
+  gap: calc(var(--space) * 2);
+}
+
+.clients-toolbar-card,
+.clients-table-card {
+  border-radius: 12px;
+}
+
+.client-wizard-page {
+  width: min(960px, calc(100% - 32px));
+  margin: 0 auto;
+  display: grid;
+  gap: calc(var(--space) * 2);
+}
+
+.wizard-steps-card,
+.wizard-content-card {
+  border-radius: 12px;
+}
+
+.wizard-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.wizard-step-type {
+  padding: calc(var(--space) * 3) 0;
+  text-align: center;
+}
+
+.wizard-type-card {
+  width: 220px;
+  text-align: center;
+  border-radius: 12px;
+}
+
+.wizard-type-card--active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgb(from var(--color-primary) r g b / 0.15);
 }

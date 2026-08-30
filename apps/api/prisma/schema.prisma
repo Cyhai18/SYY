@@ -28,6 +28,10 @@ model User {
   updatedAt     DateTime       @updatedAt
   actionLogs    ActionLog[]
   refreshTokens RefreshToken[]
+
+  ownedClients   Client[] @relation("ClientOwner")
+  createdClients Client[] @relation("ClientCreatedBy")
+  updatedClients Client[] @relation("ClientUpdatedBy")
 }
 
 model ActionLog {
@@ -56,4 +60,183 @@ model RefreshToken {
   user      User      @relation(fields: [userId], references: [id])
 
   @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// 客户画像（授权客户）
+// ---------------------------------------------------------------------------
+
+enum ClientType {
+  COMPANY
+  INDIVIDUAL
+}
+
+enum ClientStatus {
+  PENDING_REVIEW // 审核中
+  APPROVED // 已通过
+  DISABLED // 已禁用
+  // 后续新增状态直接加枚举值 + migration，扩展方式同 Role
+}
+
+enum Platform {
+  AMAZON
+  TEMU
+  SHEIN
+  TIKTOK
+  ALIEXPRESS // 速卖通
+  ALIBABA_ICBU // 阿里国际站
+  FRUUGO
+  OTHER
+}
+
+enum AgentCountry {
+  GB // 英国
+  EU // 欧盟
+  US // 美国
+  TR // 土耳其
+  CA // 加拿大
+}
+
+enum AttachmentType {
+  BUSINESS_LICENSE // 营业执照
+  ID_CARD_FRONT // 身份证正面
+  ID_CARD_BACK // 身份证反面
+  OTHER
+}
+
+// 授权客户主表
+model Client {
+  id         String       @id @default(uuid())
+  clientType ClientType
+  phone      String
+  email      String?
+  remark     String?      @db.Text
+  status     ClientStatus @default(PENDING_REVIEW)
+
+  ownerId String // 负责该客户的内部员工
+  owner   User   @relation("ClientOwner", fields: [ownerId], references: [id])
+
+  createdById String?
+  updatedById String?
+  createdBy   User?   @relation("ClientCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?   @relation("ClientUpdatedBy", fields: [updatedById], references: [id])
+
+  companyInfo  CompanyInfo?
+  legalRepInfo LegalRepresentative?
+  shops        Shop[]
+  attachments  Attachment[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // 软删除
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([phone])
+  @@index([deletedAt])
+}
+
+// 公司/个人主体信息（个人：creditCode 存身份证号）
+model CompanyInfo {
+  id         String  @id @default(uuid())
+  clientId   String  @unique
+  creditCode String // 统一信用代码 或 个人身份证号
+  nameCn     String?
+  nameEn     String?
+  addressCn  String? @db.Text
+  provinceEn String?
+  cityEn     String?
+  postalCode String?
+  addressEn  String? @db.Text // 不含国家/省/市/邮编
+  client     Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([creditCode])
+  @@index([nameEn])
+}
+
+// 法人信息
+model LegalRepresentative {
+  id              String @id @default(uuid())
+  clientId        String @unique
+  nameCn          String
+  surnamePinyin   String
+  givenNamePinyin String
+  idNumber        String
+  idAddress       String @db.Text
+  client          Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([idNumber])
+}
+
+// 店铺信息（1:N 归属客户；1:N 关联产品/代理信息）
+model Shop {
+  id             String      @id @default(uuid())
+  clientId       String
+  platform       Platform
+  shopName       String
+  shopUrl        String      @db.Text
+  brandNames     String      @db.Text // 逗号分隔，无品牌填店铺名
+  mainCategoryEn String
+  client         Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  products       Product[]
+  agentInfos     AgentInfo[]
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+  @@index([platform])
+}
+
+// 产品信息（非必填，1:N 归属店铺；clientId 冗余自 shop.clientId，便于按客户查询）
+model Product {
+  id          String   @id @default(uuid())
+  shopId      String
+  clientId    String
+  platform    Platform
+  productName String
+  category    String
+  asinOrSku   String // ASIN码/商品ID
+  productUrl  String   @db.Text
+  hasBattery  Boolean  @default(false)
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([shopId])
+  @@index([clientId])
+  @@index([asinOrSku])
+}
+
+// 代理信息（1:N 归属店铺；clientId 冗余自 shop.clientId）
+model AgentInfo {
+  id                    String       @id @default(uuid())
+  shopId                String
+  clientId              String
+  country               AgentCountry
+  expectedEffectiveDate DateTime
+  agentYears            Int
+  expiresAt             DateTime // = expectedEffectiveDate + agentYears，写入时后端计算
+  agentCompany          String
+  shop                  Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([shopId])
+  @@index([clientId])
+  @@index([country])
+  @@index([expiresAt])
+}
+
+// 附件（预留接入入口，暂不接上传逻辑）
+model Attachment {
+  id       String         @id @default(uuid())
+  clientId String
+  type     AttachmentType
+  fileUrl  String         @db.Text
+  client   Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+  @@index([type])
 }

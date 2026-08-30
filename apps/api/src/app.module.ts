@@ -13,6 +13,8 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { AuthModule } from './auth/auth.module';
 import { SmsModule } from './sms/sms.module';
 import { UsersModule } from './users/users.module';
+import { ClientsModule } from './clients/clients.module';
+import { OcrModule } from './ocr/ocr.module';
 
 @Module({
   imports: [
@@ -23,6 +25,8 @@ import { UsersModule } from './users/users.module';
     SmsModule,
     AuthModule,
     UsersModule,
+    ClientsModule,
+    OcrModule,
   ],
   controllers: [AppController],
   providers: [

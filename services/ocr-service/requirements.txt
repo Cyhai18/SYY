@@ -1,0 +1,8 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+rapidocr-onnxruntime==1.4.4
+numpy==1.26.4
+opencv-python==4.11.0.86
+cpca==0.5.5
+pypinyin==0.55.0

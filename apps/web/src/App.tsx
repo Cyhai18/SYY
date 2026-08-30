@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, ConfigProvider, Space, Typography } from 'antd';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { APP_NAME, type HealthResponse } from '@funtax/shared';
 import { antdTheme } from './theme';
 import pcLogo from '@brand/pc_logo.png';
@@ -10,6 +10,8 @@ import { UserMenu } from './components/UserMenu';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { ClientListPage } from './pages/clients/ClientListPage';
+import { ClientWizardPage } from './pages/clients/ClientWizardPage';
 import { useAuthStore } from './store/auth-store';
 import { bootstrapAuth } from './lib/auth-api';
 
@@ -34,6 +36,26 @@ export function App() {
           }
         />
         <Route
+          path="/clients"
+          element={
+            <RequireAuth>
+              <AppShell>
+                <ClientListPage />
+              </AppShell>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/clients/new"
+          element={
+            <RequireAuth>
+              <AppShell>
+                <ClientWizardPage />
+              </AppShell>
+            </RequireAuth>
+          }
+        />
+        <Route
           path="/"
           element={
             <RequireAuth>
@@ -51,14 +73,32 @@ export function App() {
 
 function AppShell({ children }: { children: React.ReactNode }) {
   const initialized = useAuthStore((s) => s.initialized);
+  const location = useLocation();
   if (!initialized) {
     return null;
   }
+  const isClients = location.pathname.startsWith('/clients');
   return (
     <div className="app-shell">
       <header className="app-header">
-        <img className="app-logo app-logo--desktop" src={pcLogo} alt={APP_NAME} />
-        <img className="app-logo app-logo--mobile" src={mobileLogo} alt={APP_NAME} />
+        <Space size="large" align="center">
+          <img className="app-logo app-logo--desktop" src={pcLogo} alt={APP_NAME} />
+          <img className="app-logo app-logo--mobile" src={mobileLogo} alt={APP_NAME} />
+          <nav className="app-nav">
+            <Link
+              to="/"
+              className={!isClients ? 'app-nav-link app-nav-link--active' : 'app-nav-link'}
+            >
+              首页
+            </Link>
+            <Link
+              to="/clients"
+              className={isClients ? 'app-nav-link app-nav-link--active' : 'app-nav-link'}
+            >
+              授权客户
+            </Link>
+          </nav>
+        </Space>
         <UserMenu />
       </header>
       <main className="app-main">{children}</main>
