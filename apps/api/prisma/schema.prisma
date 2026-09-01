@@ -97,6 +97,15 @@ enum AgentCountry {
   CA // 加拿大
 }
 
+// 代理公司为固定枚举值，与 AgentCountry 一一（或一对多）映射，见 @funtax/shared 的 AGENT_COUNTRY_COMPANIES
+enum AgentCompany {
+  OVERSEA_WALKERS_GB // 英国 - OVERSEA WALKERS LIMITED
+  OVERSEA_WALKERS_EU // 欧盟 - Oversea Walkers
+  EU_CONSULTEN_SRLS // 欧盟 - EU Consulten Srls
+  OVERSEA_WALKERS_US // 美国 - Oversea Walkers LLC
+  OVERSEA_WALKERS_TR // 土耳其 - OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi
+}
+
 enum AttachmentType {
   BUSINESS_LICENSE // 营业执照
   ID_CARD_FRONT // 身份证正面
@@ -216,7 +225,7 @@ model AgentInfo {
   expectedEffectiveDate DateTime
   agentYears            Int
   expiresAt             DateTime // = expectedEffectiveDate + agentYears，写入时后端计算
-  agentCompany          String
+  agentCompany          AgentCompany
   shop                  Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())

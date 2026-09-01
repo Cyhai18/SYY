@@ -114,11 +114,39 @@ export interface ProductPayload {
   hasBattery?: boolean;
 }
 
+/**
+ * 代理公司为固定枚举值：同一 title 在不同国家下可能重复（如均叫 "Oversea Walkers"），
+ * 故用语义化 value 区分；后续不同代理公司对应的操作逻辑（如后续跟进流程）都基于此 value 分支。
+ */
+export type AgentCompany =
+  | 'OVERSEA_WALKERS_GB'
+  | 'OVERSEA_WALKERS_EU'
+  | 'EU_CONSULTEN_SRLS'
+  | 'OVERSEA_WALKERS_US'
+  | 'OVERSEA_WALKERS_TR';
+
+export const AGENT_COMPANY_LABELS: Record<AgentCompany, string> = {
+  OVERSEA_WALKERS_GB: 'OVERSEA WALKERS LIMITED',
+  OVERSEA_WALKERS_EU: 'Oversea Walkers',
+  EU_CONSULTEN_SRLS: 'EU Consulten Srls',
+  OVERSEA_WALKERS_US: 'Oversea Walkers LLC',
+  OVERSEA_WALKERS_TR: 'OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi',
+};
+
+/** 代理国家 -> 可选代理公司列表；选择代理国家后，代理公司下拉框据此过滤选项。 */
+export const AGENT_COUNTRY_COMPANIES: Record<AgentCountry, AgentCompany[]> = {
+  GB: ['OVERSEA_WALKERS_GB'],
+  EU: ['OVERSEA_WALKERS_EU', 'EU_CONSULTEN_SRLS'],
+  US: ['OVERSEA_WALKERS_US'],
+  TR: ['OVERSEA_WALKERS_TR'],
+  CA: [],
+};
+
 export interface AgentInfoPayload {
   country: AgentCountry;
   expectedEffectiveDate: string;
   agentYears: number;
-  agentCompany: string;
+  agentCompany: AgentCompany;
 }
 
 export interface ShopPayload {

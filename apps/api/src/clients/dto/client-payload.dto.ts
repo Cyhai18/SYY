@@ -16,7 +16,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { AgentCountry, ClientType, Platform } from '@prisma/client';
+import { AgentCompany, AgentCountry, ClientType, Platform } from '@prisma/client';
 
 /**
  * 单条录入向导提交 与 批量导入行 共用的校验结构（对应 `@funtax/shared` 的 `ClientPayload`）。
@@ -58,7 +58,7 @@ export class AgentInfoDto {
   @IsEnum(AgentCountry, { message: '代理国家不合法' }) country!: AgentCountry;
   @IsDateString({}, { message: '生效日期格式不正确' }) expectedEffectiveDate!: string;
   @IsInt() @Min(1) @Max(20) agentYears!: number;
-  @IsString() @MinLength(1) @MaxLength(200) agentCompany!: string;
+  @IsEnum(AgentCompany, { message: '代理公司不合法' }) agentCompany!: AgentCompany;
 }
 
 export class ShopDto {

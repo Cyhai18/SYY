@@ -204,7 +204,7 @@ model AgentInfo {
   expectedEffectiveDate DateTime
   agentYears Int
   expiresAt DateTime                // = expectedEffectiveDate + agentYears，后端计算
-  agentCompany String
+  agentCompany AgentCompany           // 枚举值，按 country 过滤可选项，见 @funtax/shared 的 AGENT_COUNTRY_COMPANIES
   shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   @@index([shopId]) @@index([clientId]) @@index([country]) @@index([expiresAt])

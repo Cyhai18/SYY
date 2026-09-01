@@ -1,6 +1,13 @@
 import { Button, Col, Form, Input, Row, Select, Table } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { AGENT_COUNTRY_LABELS, PLATFORM_LABELS } from '@funtax/shared';
+import {
+  AGENT_COMPANY_LABELS,
+  AGENT_COUNTRY_COMPANIES,
+  AGENT_COUNTRY_LABELS,
+  PLATFORM_LABELS,
+  type AgentCompany,
+  type AgentCountry,
+} from '@funtax/shared';
 import { nextKey, type ShopDraft } from '../../../store/client-wizard-store';
 
 const PLATFORM_OPTIONS = Object.entries(PLATFORM_LABELS).map(([value, label]) => ({
@@ -11,6 +18,9 @@ const AGENT_COUNTRY_OPTIONS = Object.entries(AGENT_COUNTRY_LABELS).map(([value, 
   value,
   label,
 }));
+/** 按代理国家过滤代理公司下拉选项。 */
+const agentCompanyOptions = (country: AgentCountry) =>
+  AGENT_COUNTRY_COMPANIES[country].map((value) => ({ value, label: AGENT_COMPANY_LABELS[value] }));
 
 /** 单个店铺的表单块：店铺基础信息 + 产品明细表 + 代理信息明细表（均支持多条）。 */
 export function ShopEditor({
@@ -46,7 +56,7 @@ export function ShopEditor({
           country: 'GB',
           expectedEffectiveDate: '',
           agentYears: 1,
-          agentCompany: '',
+          agentCompany: agentCompanyOptions('GB')[0]?.value ?? 'OVERSEA_WALKERS_GB',
         },
       ],
     });
@@ -230,7 +240,9 @@ export function ShopEditor({
                 onChange={(val) =>
                   update({
                     agentInfos: shop.agentInfos.map((a) =>
-                      a.key === r.key ? { ...a, country: val } : a,
+                      a.key === r.key
+                        ? { ...a, country: val, agentCompany: agentCompanyOptions(val)[0]?.value }
+                        : a,
                     ),
                   })
                 }
@@ -279,14 +291,17 @@ export function ShopEditor({
           {
             title: '代理公司',
             dataIndex: 'agentCompany',
+            width: 220,
             render: (v, r) => (
-              <Input
+              <Select<AgentCompany>
                 size="small"
+                style={{ width: 200 }}
                 value={v}
-                onChange={(e) =>
+                options={agentCompanyOptions(r.country)}
+                onChange={(val) =>
                   update({
                     agentInfos: shop.agentInfos.map((a) =>
-                      a.key === r.key ? { ...a, agentCompany: e.target.value } : a,
+                      a.key === r.key ? { ...a, agentCompany: val } : a,
                     ),
                   })
                 }
