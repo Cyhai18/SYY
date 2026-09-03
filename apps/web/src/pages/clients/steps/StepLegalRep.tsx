@@ -91,6 +91,14 @@ export function StepLegalRep() {
               </Form.Item>
             </Col>
             <Col span={12}>
+              <Form.Item label="姓名（拼音）" required>
+                <Input
+                  value={legalRepInfo.namePinyin}
+                  onChange={(e) => setLegalRepInfo({ namePinyin: e.target.value })}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
               <Form.Item label="身份证号" required>
                 <Input
                   value={legalRepInfo.idNumber}
@@ -99,27 +107,28 @@ export function StepLegalRep() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="姓（拼音）" required>
+              <Form.Item label="邮编">
                 <Input
-                  value={legalRepInfo.surnamePinyin}
-                  onChange={(e) => setLegalRepInfo({ surnamePinyin: e.target.value })}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="名（拼音）" required>
-                <Input
-                  value={legalRepInfo.givenNamePinyin}
-                  onChange={(e) => setLegalRepInfo({ givenNamePinyin: e.target.value })}
+                  value={legalRepInfo.idPostalCode}
+                  onChange={(e) => setLegalRepInfo({ idPostalCode: e.target.value })}
                 />
               </Form.Item>
             </Col>
             <Col span={24}>
-              <Form.Item label="身份证地址" required>
+              <Form.Item label="身份证地址（中文）" required>
                 <Input.TextArea
                   rows={2}
-                  value={legalRepInfo.idAddress}
-                  onChange={(e) => setLegalRepInfo({ idAddress: e.target.value })}
+                  value={legalRepInfo.idAddressCn}
+                  onChange={(e) => setLegalRepInfo({ idAddressCn: e.target.value })}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={24}>
+              <Form.Item label="身份证地址（英文）">
+                <Input.TextArea
+                  rows={2}
+                  value={legalRepInfo.idAddressEn}
+                  onChange={(e) => setLegalRepInfo({ idAddressEn: e.target.value })}
                 />
               </Form.Item>
             </Col>

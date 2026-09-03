@@ -41,6 +41,7 @@ export class ClientsService {
           shops: {
             create: payload.shops.map((shop) => ({
               platform: shop.platform,
+              shopId: shop.shopId,
               shopName: shop.shopName,
               shopUrl: shop.shopUrl,
               brandNames: shop.brandNames,

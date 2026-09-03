@@ -39,15 +39,17 @@ export class CompanyInfoDto {
 
 export class LegalRepresentativeDto {
   @IsString() @MinLength(1) @MaxLength(100) nameCn!: string;
-  @IsString() @MinLength(1) @MaxLength(100) surnamePinyin!: string;
-  @IsString() @MinLength(1) @MaxLength(100) givenNamePinyin!: string;
+  @IsString() @MinLength(1) @MaxLength(100) namePinyin!: string;
   @IsString() @MinLength(1) @MaxLength(64) idNumber!: string;
-  @IsString() @MinLength(1) idAddress!: string;
+  @IsString() @MinLength(1) idAddressCn!: string;
+  @IsOptional() @IsString() @MaxLength(20) idPostalCode?: string;
+  @IsOptional() @IsString() idAddressEn?: string;
 }
 
 export class ProductDto {
   @IsEnum(Platform, { message: '平台不合法' }) platform!: Platform;
-  @IsString() @MinLength(1) @MaxLength(200) productName!: string;
+  @IsString() @MinLength(1) @MaxLength(200) productNameCn!: string;
+  @IsString() @MinLength(1) @MaxLength(200) productNameEn!: string;
   @IsString() @MinLength(1) @MaxLength(100) category!: string;
   @IsString() @MinLength(1) @MaxLength(100) asinOrSku!: string;
   @IsString() @MinLength(1) productUrl!: string;
@@ -63,6 +65,7 @@ export class AgentInfoDto {
 
 export class ShopDto {
   @IsEnum(Platform, { message: '平台不合法' }) platform!: Platform;
+  @IsOptional() @IsString() @MaxLength(100) shopId?: string;
   @IsString() @MinLength(1) @MaxLength(200) shopName!: string;
   @IsString() @MinLength(1) shopUrl!: string;
   @IsString() @MinLength(1) brandNames!: string;

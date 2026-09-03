@@ -43,11 +43,11 @@ apps/api 透传 PDF → apps/web 触发下载
 | `party_a_name` | `clientType===COMPANY ? CompanyInfo.nameEn : 个人姓名拼音`（当前需求仅覆盖公司英文名场景，个人分支留 TODO） |
 | `party_a_address` | `CompanyInfo.addressEn` |
 | `party_a_zip` | `CompanyInfo.postalCode` |
-| `contact_person` | `LegalRepresentative.surnamePinyin + givenNamePinyin` |
+| `contact_person` | `LegalRepresentative.namePinyin` |
 | `tel` | `Client.phone` |
 | `email` | `Client.email` |
 | `shops`（表格循环，≤5） | 该 `AgentInfo` 所属 `Shop`（一个 AgentInfo 对应一个 Shop）：`platform`/`shopUrl`/`shopId`/`shopName`/`brandNames` |
-| `products`（嵌套循环，每店铺≤5） | `Shop.products[]`：`productNameCn`/`productName`(英文) |
+| `products`（嵌套循环，每店铺≤5） | `Shop.products[]`：`productNameCn`/`productNameEn` |
 
 > 一份证书对应一个 `AgentInfo`（= 一个店铺 + 一个代理公司/国家的组合），因此生成入口是"针对某条 agentInfo 生成"，不是整个客户。
 

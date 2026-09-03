@@ -99,15 +99,17 @@ export interface CompanyInfoPayload {
 
 export interface LegalRepresentativePayload {
   nameCn: string;
-  surnamePinyin: string;
-  givenNamePinyin: string;
+  namePinyin: string;
   idNumber: string;
-  idAddress: string;
+  idAddressCn: string;
+  idPostalCode?: string;
+  idAddressEn?: string;
 }
 
 export interface ProductPayload {
   platform: Platform;
-  productName: string;
+  productNameCn: string;
+  productNameEn: string;
   category: string;
   asinOrSku: string;
   productUrl: string;
@@ -151,6 +153,7 @@ export interface AgentInfoPayload {
 
 export interface ShopPayload {
   platform: Platform;
+  shopId?: string;
   shopName: string;
   shopUrl: string;
   brandNames: string;
@@ -179,9 +182,10 @@ export interface BusinessLicenseFields {
 export interface IdCardFields {
   nameCn?: string;
   idNumber?: string;
-  idAddress?: string;
-  surnamePinyin?: string;
-  givenNamePinyin?: string;
+  namePinyin?: string;
+  idAddressCn?: string;
+  idAddressEn?: string;
+  idPostalCode?: string;
 }
 
 /** 单条创建/编辑客户的统一结构，未来批量导入按同一结构拼装后复用同一后端入口。 */

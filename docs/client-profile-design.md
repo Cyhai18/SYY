@@ -158,10 +158,11 @@ model LegalRepresentative {
   id String @id @default(uuid())
   clientId String @unique
   nameCn String
-  surnamePinyin String
-  givenNamePinyin String
+  namePinyin String                // 姓名拼音，通过身份证 OCR 识别
   idNumber String
-  idAddress String @db.Text
+  idAddressCn String @db.Text      // 身份证地址（中文），通过身份证 OCR 识别
+  idPostalCode String?
+  idAddressEn String? @db.Text     // 身份证地址（英文）
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
   @@index([idNumber])
 }
@@ -170,6 +171,7 @@ model Shop {
   id String @id @default(uuid())
   clientId String
   platform Platform
+  shopId String?                   // 平台方店铺 ID
   shopName String
   shopUrl String @db.Text
   brandNames String @db.Text      // 逗号分隔，无品牌填店铺名
@@ -186,7 +188,8 @@ model Product {
   shopId String
   clientId String                  // 冗余自 shop.clientId，避免按客户查询时 join
   platform Platform
-  productName String
+  productNameCn String
+  productNameEn String
   category String
   asinOrSku String
   productUrl String @db.Text
@@ -292,10 +295,10 @@ POST /api/ocr/business-license   (multipart: file)
   → { fields: { creditCode?, nameCn?, addressCn? }, recognized: boolean }
 
 POST /api/ocr/id-card            (multipart: file, query: side=front|back)
-  → { fields: { nameCn?, idNumber?, idAddress?, surnamePinyin?, givenNamePinyin? }, recognized: boolean }
+  → { fields: { nameCn?, idNumber?, namePinyin?, idAddressCn?, idAddressEn?, idPostalCode? }, recognized: boolean }
 ```
 
-`BusinessLicenseFields` 里的 `nameEn`/`provinceEn`/`cityEn`/`postalCode`/`addressEn` 由 OCR 微服务离线规则转写产出（拼音转写 + `cpca` 省市区识别 + 邮编查表，见 `services/ocr-service/translate.py`），前端字段仍可编辑覆盖；`IdCardFields` 的 `surnamePinyin`/`givenNamePinyin` 同样由该微服务离线规则转写产出（常见复姓表 + 默认单字姓拆分姓名，再分别转写拼音，见 `translate.py` 的 `translate_person_name`），仅正面（`id_card_front`）识别时返回，无邮编字段。`recognized=false` 或关键字段为空时，前端展示统一提示语，不做逐字段标红。图片本身不落盘、不返回任何文件引用（见 3.1.2 节）。
+`BusinessLicenseFields` 里的 `nameEn`/`provinceEn`/`cityEn`/`postalCode`/`addressEn` 由 OCR 微服务离线规则转写产出（拼音转写 + `cpca` 省市区识别 + 邮编查表，见 `services/ocr-service/translate.py`），前端字段仍可编辑覆盖；`IdCardFields` 的 `namePinyin`/`idAddressEn`/`idPostalCode` 同样由该微服务离线规则转写产出（姓名整体转写拼音 + 地址转写方式与营业执照地址一致，见 `translate.py` 的 `translate_id_card_fields`），仅正面（`id_card_front`）识别时返回。`recognized=false` 或关键字段为空时，前端展示统一提示语，不做逐字段标红。图片本身不落盘、不返回任何文件引用（见 3.1.2 节）。
 
 ### 3.3 后端模块结构
 

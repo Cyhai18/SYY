@@ -163,16 +163,17 @@ model CompanyInfo {
   @@index([nameEn])
 }
 
-// 法人信息
+// 法人信息（个人客户即本人）
 model LegalRepresentative {
-  id              String @id @default(uuid())
-  clientId        String @unique
-  nameCn          String
-  surnamePinyin   String
-  givenNamePinyin String
-  idNumber        String
-  idAddress       String @db.Text
-  client          Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  id           String  @id @default(uuid())
+  clientId     String  @unique
+  nameCn       String
+  namePinyin   String // 姓名拼音，通过身份证 OCR 识别
+  idNumber     String
+  idAddressCn  String  @db.Text // 身份证地址（中文），通过身份证 OCR 识别
+  idPostalCode String?
+  idAddressEn  String? @db.Text // 身份证地址（英文）
+  client       Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([idNumber])
 }
@@ -182,6 +183,7 @@ model Shop {
   id             String      @id @default(uuid())
   clientId       String
   platform       Platform
+  shopId         String? // 平台方店铺 ID
   shopName       String
   shopUrl        String      @db.Text
   brandNames     String      @db.Text // 逗号分隔，无品牌填店铺名
@@ -198,16 +200,17 @@ model Shop {
 
 // 产品信息（非必填，1:N 归属店铺；clientId 冗余自 shop.clientId，便于按客户查询）
 model Product {
-  id          String   @id @default(uuid())
-  shopId      String
-  clientId    String
-  platform    Platform
-  productName String
-  category    String
-  asinOrSku   String // ASIN码/商品ID
-  productUrl  String   @db.Text
-  hasBattery  Boolean  @default(false)
-  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  id            String   @id @default(uuid())
+  shopId        String
+  clientId      String
+  platform      Platform
+  productNameCn String
+  productNameEn String
+  category      String
+  asinOrSku     String // ASIN码/商品ID
+  productUrl    String   @db.Text
+  hasBattery    Boolean  @default(false)
+  shop          Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 

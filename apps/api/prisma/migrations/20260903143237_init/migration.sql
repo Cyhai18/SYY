@@ -1,4 +1,53 @@
 -- CreateTable
+CREATE TABLE `User` (
+    `id` VARCHAR(191) NOT NULL,
+    `phone` VARCHAR(191) NOT NULL,
+    `password` VARCHAR(191) NULL,
+    `email` VARCHAR(191) NULL,
+    `nickname` VARCHAR(191) NOT NULL DEFAULT '用户',
+    `avatarUrl` VARCHAR(191) NULL,
+    `role` ENUM('USER', 'ADMIN', 'SUPERADMIN') NOT NULL DEFAULT 'USER',
+    `status` INTEGER NOT NULL DEFAULT 1,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `User_phone_key`(`phone`),
+    UNIQUE INDEX `User_email_key`(`email`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `ActionLog` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NULL,
+    `action` VARCHAR(191) NOT NULL,
+    `detail` TEXT NULL,
+    `ip` VARCHAR(191) NULL,
+    `userAgent` TEXT NULL,
+    `requestId` VARCHAR(191) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `ActionLog_userId_idx`(`userId`),
+    INDEX `ActionLog_action_idx`(`action`),
+    INDEX `ActionLog_requestId_idx`(`requestId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `RefreshToken` (
+    `id` VARCHAR(191) NOT NULL,
+    `userId` VARCHAR(191) NOT NULL,
+    `tokenHash` VARCHAR(191) NOT NULL,
+    `expiresAt` DATETIME(3) NOT NULL,
+    `revokedAt` DATETIME(3) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `RefreshToken_tokenHash_key`(`tokenHash`),
+    INDEX `RefreshToken_userId_idx`(`userId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `Client` (
     `id` VARCHAR(191) NOT NULL,
     `clientType` ENUM('COMPANY', 'INDIVIDUAL') NOT NULL,
@@ -44,10 +93,11 @@ CREATE TABLE `LegalRepresentative` (
     `id` VARCHAR(191) NOT NULL,
     `clientId` VARCHAR(191) NOT NULL,
     `nameCn` VARCHAR(191) NOT NULL,
-    `surnamePinyin` VARCHAR(191) NOT NULL,
-    `givenNamePinyin` VARCHAR(191) NOT NULL,
+    `namePinyin` VARCHAR(191) NOT NULL,
     `idNumber` VARCHAR(191) NOT NULL,
-    `idAddress` TEXT NOT NULL,
+    `idAddressCn` TEXT NOT NULL,
+    `idPostalCode` VARCHAR(191) NULL,
+    `idAddressEn` TEXT NULL,
 
     UNIQUE INDEX `LegalRepresentative_clientId_key`(`clientId`),
     INDEX `LegalRepresentative_idNumber_idx`(`idNumber`),
@@ -59,6 +109,7 @@ CREATE TABLE `Shop` (
     `id` VARCHAR(191) NOT NULL,
     `clientId` VARCHAR(191) NOT NULL,
     `platform` ENUM('AMAZON', 'TEMU', 'SHEIN', 'TIKTOK', 'ALIEXPRESS', 'ALIBABA_ICBU', 'FRUUGO', 'OTHER') NOT NULL,
+    `shopId` VARCHAR(191) NULL,
     `shopName` VARCHAR(191) NOT NULL,
     `shopUrl` TEXT NOT NULL,
     `brandNames` TEXT NOT NULL,
@@ -76,7 +127,8 @@ CREATE TABLE `Product` (
     `shopId` VARCHAR(191) NOT NULL,
     `clientId` VARCHAR(191) NOT NULL,
     `platform` ENUM('AMAZON', 'TEMU', 'SHEIN', 'TIKTOK', 'ALIEXPRESS', 'ALIBABA_ICBU', 'FRUUGO', 'OTHER') NOT NULL,
-    `productName` VARCHAR(191) NOT NULL,
+    `productNameCn` VARCHAR(191) NOT NULL,
+    `productNameEn` VARCHAR(191) NOT NULL,
     `category` VARCHAR(191) NOT NULL,
     `asinOrSku` VARCHAR(191) NOT NULL,
     `productUrl` TEXT NOT NULL,
@@ -98,7 +150,7 @@ CREATE TABLE `AgentInfo` (
     `expectedEffectiveDate` DATETIME(3) NOT NULL,
     `agentYears` INTEGER NOT NULL,
     `expiresAt` DATETIME(3) NOT NULL,
-    `agentCompany` VARCHAR(191) NOT NULL,
+    `agentCompany` ENUM('OVERSEA_WALKERS_GB', 'OVERSEA_WALKERS_EU', 'EU_CONSULTEN_SRLS', 'OVERSEA_WALKERS_US', 'OVERSEA_WALKERS_TR') NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     INDEX `AgentInfo_shopId_idx`(`shopId`),
@@ -120,6 +172,12 @@ CREATE TABLE `Attachment` (
     INDEX `Attachment_type_idx`(`type`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- AddForeignKey
+ALTER TABLE `ActionLog` ADD CONSTRAINT `ActionLog_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `RefreshToken` ADD CONSTRAINT `RefreshToken_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `User`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Client` ADD CONSTRAINT `Client_ownerId_fkey` FOREIGN KEY (`ownerId`) REFERENCES `User`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;

@@ -26,8 +26,7 @@ interface RapidOcrServiceFields {
   province_en?: string;
   city_en?: string;
   postal_code?: string;
-  surname_pinyin?: string;
-  given_name_pinyin?: string;
+  name_pinyin?: string;
 }
 
 interface RapidOcrServiceResponse {
@@ -74,9 +73,10 @@ export class RapidOcrProvider implements OcrProvider {
     const fields: IdCardFields = {
       nameCn: raw.fields.name || undefined,
       idNumber: raw.fields.id_number || undefined,
-      idAddress: raw.fields.address || undefined,
-      surnamePinyin: raw.fields.surname_pinyin || undefined,
-      givenNamePinyin: raw.fields.given_name_pinyin || undefined,
+      namePinyin: raw.fields.name_pinyin || undefined,
+      idAddressCn: raw.fields.address || undefined,
+      idAddressEn: raw.fields.address_en || undefined,
+      idPostalCode: raw.fields.postal_code || undefined,
     };
     return { fields, rawText: raw.rawText, recognized: true };
   }

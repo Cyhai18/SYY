@@ -21,9 +21,10 @@ export interface BusinessLicenseFields {
 export interface IdCardFields {
   nameCn?: string;
   idNumber?: string;
-  idAddress?: string;
-  surnamePinyin?: string;
-  givenNamePinyin?: string;
+  namePinyin?: string;
+  idAddressCn?: string;
+  idAddressEn?: string;
+  idPostalCode?: string;
 }
 
 /** Provider 只负责“认图”，图片不落盘，识别完即由调用方丢弃。 */

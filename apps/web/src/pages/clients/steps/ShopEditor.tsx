@@ -39,7 +39,8 @@ export function ShopEditor({
         {
           key: nextKey(),
           platform: 'AMAZON',
-          productName: '',
+          productNameCn: '',
+          productNameEn: '',
           category: '',
           asinOrSku: '',
           productUrl: '',
@@ -77,6 +78,11 @@ export function ShopEditor({
           <Col span={8}>
             <Form.Item label="店铺名称" required>
               <Input value={shop.shopName} onChange={(e) => update({ shopName: e.target.value })} />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label="店铺 ID">
+              <Input value={shop.shopId} onChange={(e) => update({ shopId: e.target.value })} />
             </Form.Item>
           </Col>
           <Col span={8}>
@@ -131,8 +137,8 @@ export function ShopEditor({
             ),
           },
           {
-            title: '产品名称',
-            dataIndex: 'productName',
+            title: '产品名称（中文）',
+            dataIndex: 'productNameCn',
             render: (v, r) => (
               <Input
                 size="small"
@@ -140,7 +146,24 @@ export function ShopEditor({
                 onChange={(e) =>
                   update({
                     products: shop.products.map((p) =>
-                      p.key === r.key ? { ...p, productName: e.target.value } : p,
+                      p.key === r.key ? { ...p, productNameCn: e.target.value } : p,
+                    ),
+                  })
+                }
+              />
+            ),
+          },
+          {
+            title: '产品名称（英文）',
+            dataIndex: 'productNameEn',
+            render: (v, r) => (
+              <Input
+                size="small"
+                value={v}
+                onChange={(e) =>
+                  update({
+                    products: shop.products.map((p) =>
+                      p.key === r.key ? { ...p, productNameEn: e.target.value } : p,
                     ),
                   })
                 }

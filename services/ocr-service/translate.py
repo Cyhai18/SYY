@@ -296,31 +296,22 @@ def translate_business_license_fields(fields: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
-# 常见复姓（按长度降序匹配），未命中时按单字姓处理——姓名分拆没有绝对准确的算法，
-# 这里只覆盖常见复姓，生僻/罕见复姓仍会被误拆成单字姓，前端字段允许人工编辑修正。
-_COMPOUND_SURNAMES = (
-    "欧阳", "太史", "端木", "上官", "司马", "东方", "独孤", "南宫", "万俟", "闻人",
-    "夏侯", "诸葛", "尉迟", "公羊", "赫连", "澹台", "皇甫", "宗政", "濮阳", "公冶",
-    "太叔", "申屠", "公孙", "慕容", "仲孙", "钟离", "长孙", "宇文", "司徒", "鲜于",
-)
-
-
 def translate_person_name(name: str) -> dict[str, str]:
-    """把中文姓名拆分为姓/名并分别转写为拼音（首字母大写、姓名内部不加空格），
-    供身份证识别结果直接填充"姓（拼音）"/"名（拼音）"表单字段。
-    姓名拆分采用常见复姓表 + 默认单字姓的启发式规则，无法做到 100% 准确，
-    结果仅作建议值，业务上应允许人工编辑。
+    """把中文姓名整体转写为拼音（首字母大写、姓名内部不加空格），供身份证识别结果
+    直接填充"姓名（拼音）"表单字段。结果仅作建议值，业务上应允许人工编辑。
     """
-    result = {"surname_pinyin": "", "given_name_pinyin": ""}
     name = (name or "").strip()
     if len(name) < 2:
-        return result
-    surname = name[:1]
-    for compound in _COMPOUND_SURNAMES:
-        if name.startswith(compound) and len(name) > len(compound):
-            surname = compound
-            break
-    given_name = name[len(surname):]
-    result["surname_pinyin"] = _transliterate_compact(surname)
-    result["given_name_pinyin"] = _transliterate_compact(given_name)
-    return result
+        return {"name_pinyin": ""}
+    return {"name_pinyin": _transliterate_compact(name)}
+
+
+def translate_id_card_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """在 extract_fields 产出的 id_card_front 字段基础上追加姓名拼音 + 地址英文转写字段，
+    地址转写方式与营业执照地址一致（见 `translate_business_license_fields`）。
+    """
+    fields.update(translate_person_name(fields.get("name") or ""))
+    region = guess_region(fields.get("address") or "")
+    fields["address_en"] = translate_address(fields.get("address") or "")
+    fields["postal_code"] = region["postal_code"]
+    return fields

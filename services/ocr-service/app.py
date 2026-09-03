@@ -28,7 +28,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from rapidocr_onnxruntime import RapidOCR
 
 from parsers import extract_fields
-from translate import translate_business_license_fields, translate_person_name
+from translate import translate_business_license_fields, translate_id_card_fields
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocr-service")
@@ -234,7 +234,7 @@ async def recognize(file: UploadFile = File(...), doc_type: str = Form(...)):
         if doc_type == "business_license":
             fields = translate_business_license_fields(fields)
         elif doc_type == "id_card_front":
-            fields.update(translate_person_name(fields.get("name") or ""))
+            fields = translate_id_card_fields(fields)
     except Exception as exc:  # noqa: BLE001
         logger.exception("OCR failed for doc_type=%s", doc_type)
         raise HTTPException(status_code=500, detail=f"识别失败: {exc}") from exc
