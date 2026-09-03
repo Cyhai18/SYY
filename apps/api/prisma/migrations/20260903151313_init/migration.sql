@@ -105,8 +105,26 @@ CREATE TABLE `LegalRepresentative` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
+CREATE TABLE `AgentInfo` (
+    `id` VARCHAR(191) NOT NULL,
+    `clientId` VARCHAR(191) NOT NULL,
+    `country` ENUM('GB', 'EU', 'US', 'TR', 'CA') NOT NULL,
+    `expectedEffectiveDate` DATETIME(3) NOT NULL,
+    `agentYears` INTEGER NOT NULL,
+    `expiresAt` DATETIME(3) NOT NULL,
+    `agentCompany` ENUM('OVERSEA_WALKERS_GB', 'OVERSEA_WALKERS_EU', 'EU_CONSULTEN_SRLS', 'OVERSEA_WALKERS_US', 'OVERSEA_WALKERS_TR') NOT NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `AgentInfo_clientId_idx`(`clientId`),
+    INDEX `AgentInfo_country_idx`(`country`),
+    INDEX `AgentInfo_expiresAt_idx`(`expiresAt`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
 CREATE TABLE `Shop` (
     `id` VARCHAR(191) NOT NULL,
+    `agentInfoId` VARCHAR(191) NOT NULL,
     `clientId` VARCHAR(191) NOT NULL,
     `platform` ENUM('AMAZON', 'TEMU', 'SHEIN', 'TIKTOK', 'ALIEXPRESS', 'ALIBABA_ICBU', 'FRUUGO', 'OTHER') NOT NULL,
     `shopId` VARCHAR(191) NULL,
@@ -116,6 +134,7 @@ CREATE TABLE `Shop` (
     `mainCategoryEn` VARCHAR(191) NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
+    INDEX `Shop_agentInfoId_idx`(`agentInfoId`),
     INDEX `Shop_clientId_idx`(`clientId`),
     INDEX `Shop_platform_idx`(`platform`),
     PRIMARY KEY (`id`)
@@ -138,25 +157,6 @@ CREATE TABLE `Product` (
     INDEX `Product_shopId_idx`(`shopId`),
     INDEX `Product_clientId_idx`(`clientId`),
     INDEX `Product_asinOrSku_idx`(`asinOrSku`),
-    PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- CreateTable
-CREATE TABLE `AgentInfo` (
-    `id` VARCHAR(191) NOT NULL,
-    `shopId` VARCHAR(191) NOT NULL,
-    `clientId` VARCHAR(191) NOT NULL,
-    `country` ENUM('GB', 'EU', 'US', 'TR', 'CA') NOT NULL,
-    `expectedEffectiveDate` DATETIME(3) NOT NULL,
-    `agentYears` INTEGER NOT NULL,
-    `expiresAt` DATETIME(3) NOT NULL,
-    `agentCompany` ENUM('OVERSEA_WALKERS_GB', 'OVERSEA_WALKERS_EU', 'EU_CONSULTEN_SRLS', 'OVERSEA_WALKERS_US', 'OVERSEA_WALKERS_TR') NOT NULL,
-    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
-    INDEX `AgentInfo_shopId_idx`(`shopId`),
-    INDEX `AgentInfo_clientId_idx`(`clientId`),
-    INDEX `AgentInfo_country_idx`(`country`),
-    INDEX `AgentInfo_expiresAt_idx`(`expiresAt`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -195,13 +195,13 @@ ALTER TABLE `CompanyInfo` ADD CONSTRAINT `CompanyInfo_clientId_fkey` FOREIGN KEY
 ALTER TABLE `LegalRepresentative` ADD CONSTRAINT `LegalRepresentative_clientId_fkey` FOREIGN KEY (`clientId`) REFERENCES `Client`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Shop` ADD CONSTRAINT `Shop_clientId_fkey` FOREIGN KEY (`clientId`) REFERENCES `Client`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `AgentInfo` ADD CONSTRAINT `AgentInfo_clientId_fkey` FOREIGN KEY (`clientId`) REFERENCES `Client`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Shop` ADD CONSTRAINT `Shop_agentInfoId_fkey` FOREIGN KEY (`agentInfoId`) REFERENCES `AgentInfo`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Product` ADD CONSTRAINT `Product_shopId_fkey` FOREIGN KEY (`shopId`) REFERENCES `Shop`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `AgentInfo` ADD CONSTRAINT `AgentInfo_shopId_fkey` FOREIGN KEY (`shopId`) REFERENCES `Shop`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Attachment` ADD CONSTRAINT `Attachment_clientId_fkey` FOREIGN KEY (`clientId`) REFERENCES `Client`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

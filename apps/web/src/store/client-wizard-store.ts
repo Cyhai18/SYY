@@ -16,7 +16,12 @@ export const nextKey = () => `k${Date.now()}-${uidSeq++}`;
 export interface ShopDraft extends ShopPayload {
   key: string;
   products: (ProductPayload & { key: string })[];
-  agentInfos: (AgentInfoPayload & { key: string })[];
+}
+
+/** 向导内的代理信息草稿：一条代理信息可覆盖多个店铺。 */
+export interface AgentInfoDraft extends AgentInfoPayload {
+  key: string;
+  shops: ShopDraft[];
 }
 
 interface ClientWizardState {
@@ -27,7 +32,7 @@ interface ClientWizardState {
   remark?: string;
   companyInfo: Partial<CompanyInfoPayload>;
   legalRepInfo: Partial<LegalRepresentativePayload>;
-  shops: ShopDraft[];
+  agentInfos: AgentInfoDraft[];
   /** OCR 识别是否失败过，用于在表单顶部展示统一提醒语。 */
   ocrFailedHint: boolean;
 
@@ -36,7 +41,7 @@ interface ClientWizardState {
   setContact: (fields: { phone?: string; email?: string; remark?: string }) => void;
   setCompanyInfo: (fields: Partial<CompanyInfoPayload>) => void;
   setLegalRepInfo: (fields: Partial<LegalRepresentativePayload>) => void;
-  setShops: (shops: ShopDraft[]) => void;
+  setAgentInfos: (agentInfos: AgentInfoDraft[]) => void;
   markOcrFailed: () => void;
   reset: () => void;
 }
@@ -49,7 +54,7 @@ const initialState = {
   remark: undefined as string | undefined,
   companyInfo: {} as Partial<CompanyInfoPayload>,
   legalRepInfo: {} as Partial<LegalRepresentativePayload>,
-  shops: [] as ShopDraft[],
+  agentInfos: [] as AgentInfoDraft[],
   ocrFailedHint: false,
 };
 
@@ -61,7 +66,7 @@ export const useClientWizardStore = create<ClientWizardState>((set) => ({
   setContact: (fields) => set((s) => ({ ...s, ...fields })),
   setCompanyInfo: (fields) => set((s) => ({ companyInfo: { ...s.companyInfo, ...fields } })),
   setLegalRepInfo: (fields) => set((s) => ({ legalRepInfo: { ...s.legalRepInfo, ...fields } })),
-  setShops: (shops) => set({ shops }),
+  setAgentInfos: (agentInfos) => set({ agentInfos }),
   markOcrFailed: () => set({ ocrFailedHint: true }),
   reset: () => set({ ...initialState }),
 }));

@@ -132,7 +132,7 @@ model Client {
 
   companyInfo  CompanyInfo?
   legalRepInfo LegalRepresentative?
-  shops        Shop[]
+  agentInfos   AgentInfo[]
   attachments  Attachment[]
 
   createdAt DateTime  @default(now())
@@ -178,9 +178,29 @@ model LegalRepresentative {
   @@index([idNumber])
 }
 
-// 店铺信息（1:N 归属客户；1:N 关联产品/代理信息）
+// 代理信息（1:N 归属客户；1:N 关联店铺，一份代理协议可覆盖多个店铺）
+model AgentInfo {
+  id                    String       @id @default(uuid())
+  clientId              String
+  country               AgentCountry
+  expectedEffectiveDate DateTime
+  agentYears            Int
+  expiresAt             DateTime // = expectedEffectiveDate + agentYears，写入时后端计算
+  agentCompany          AgentCompany
+  client                Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  shops                 Shop[]
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+  @@index([country])
+  @@index([expiresAt])
+}
+
+// 店铺信息（1:N 归属代理信息；clientId 冗余自 agentInfo.clientId，便于按客户查询；1:N 关联产品）
 model Shop {
   id             String      @id @default(uuid())
+  agentInfoId    String
   clientId       String
   platform       Platform
   shopId         String? // 平台方店铺 ID
@@ -188,12 +208,12 @@ model Shop {
   shopUrl        String      @db.Text
   brandNames     String      @db.Text // 逗号分隔，无品牌填店铺名
   mainCategoryEn String
-  client         Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  agentInfo      AgentInfo   @relation(fields: [agentInfoId], references: [id], onDelete: Cascade)
   products       Product[]
-  agentInfos     AgentInfo[]
 
   createdAt DateTime @default(now())
 
+  @@index([agentInfoId])
   @@index([clientId])
   @@index([platform])
 }
@@ -217,26 +237,6 @@ model Product {
   @@index([shopId])
   @@index([clientId])
   @@index([asinOrSku])
-}
-
-// 代理信息（1:N 归属店铺；clientId 冗余自 shop.clientId）
-model AgentInfo {
-  id                    String       @id @default(uuid())
-  shopId                String
-  clientId              String
-  country               AgentCountry
-  expectedEffectiveDate DateTime
-  agentYears            Int
-  expiresAt             DateTime // = expectedEffectiveDate + agentYears，写入时后端计算
-  agentCompany          AgentCompany
-  shop                  Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-
-  @@index([shopId])
-  @@index([clientId])
-  @@index([country])
-  @@index([expiresAt])
 }
 
 // 附件（预留接入入口，暂不接上传逻辑）

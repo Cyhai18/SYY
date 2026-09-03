@@ -144,13 +144,6 @@ export const AGENT_COUNTRY_COMPANIES: Record<AgentCountry, AgentCompany[]> = {
   CA: [],
 };
 
-export interface AgentInfoPayload {
-  country: AgentCountry;
-  expectedEffectiveDate: string;
-  agentYears: number;
-  agentCompany: AgentCompany;
-}
-
 export interface ShopPayload {
   platform: Platform;
   shopId?: string;
@@ -159,7 +152,14 @@ export interface ShopPayload {
   brandNames: string;
   mainCategoryEn: string;
   products?: ProductPayload[];
-  agentInfos?: AgentInfoPayload[];
+}
+
+export interface AgentInfoPayload {
+  country: AgentCountry;
+  expectedEffectiveDate: string;
+  agentYears: number;
+  agentCompany: AgentCompany;
+  shops?: ShopPayload[];
 }
 
 /** OCR 识别接口的统一返回结构：`fields` 为结构化字段，`recognized` 标记是否识别成功。营业执照/身份证图片仅用于识别，不落盘、不返回 fileUrl。 */
@@ -196,7 +196,7 @@ export interface ClientPayload {
   remark?: string;
   companyInfo: CompanyInfoPayload;
   legalRepInfo: LegalRepresentativePayload;
-  shops: ShopPayload[];
+  agentInfos: AgentInfoPayload[];
 }
 
 export interface ClientListItem {

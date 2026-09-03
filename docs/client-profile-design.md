@@ -53,7 +53,7 @@
    - 浏览器打开 `http://localhost:5173/clients`，点"新建客户"进入 4 步向导：
      - Step0 选择"企业/个人"；个人客户会跳过 Step1（公司信息）。
      - Step1/Step2 上传营业执照、身份证正反面图片会调用 OCR 接口：图片**不落盘**，仅用于识别，识别完即丢弃；若未启动 RapidOCR 微服务（见下方启动说明），接口返回 `recognized: false`，走"识别失败，请手动填写"的兜底提示，不阻断流程，手动填完文字字段即可继续；若已启动微服务，回填字段后仍可手动编辑修正。
-     - Step3 添加至少一个店铺，可在店铺内添加产品/代理信息（多条动态表格）。
+     - Step3 添加至少一条代理信息，可在代理信息内添加多个店铺，每个店铺内再添加产品信息（多条动态表格）。
      - 提交后应在客户列表页看到新增记录；可点击详情校验各嵌套字段是否正确落库。因营业执照/身份证不落盘，本次向导不会产生任何 `Attachment` 记录，这是预期行为，非 bug。
    - 直接用 `curl`/Postman 验证 API：`POST /api/clients`（需带登录后的 Cookie/Bearer token）、`GET /api/clients`、`GET /api/clients/:id`、`PATCH /api/clients/:id`、`DELETE /api/clients/:id`。
    - OCR 接口单独验证：`POST /api/ocr/business-license`、`POST /api/ocr/id-card?side=front|back`（multipart，字段名 `file`）；未配置 `OCR_SERVICE_URL` 时会在 API 日志打印 `[OCR] RapidOCR 微服务未配置 OCR_SERVICE_URL，跳过识别` 并返回 `{ recognized: false, fields: {} }`（不含 `fileUrl`，图片不落地），这是当前预期结果，非 bug。
@@ -132,7 +132,7 @@ model Client {
 
   companyInfo  CompanyInfo?
   legalRepInfo LegalRepresentative?
-  shops        Shop[]
+  agentInfos   AgentInfo[]
   attachments  Attachment[]
 
   createdAt DateTime  @default(now())
@@ -169,18 +169,18 @@ model LegalRepresentative {
 
 model Shop {
   id String @id @default(uuid())
-  clientId String
+  agentInfoId String
+  clientId String                  // 冗余自 agentInfo.clientId，避免按客户查询时 join
   platform Platform
   shopId String?                   // 平台方店铺 ID
   shopName String
   shopUrl String @db.Text
   brandNames String @db.Text      // 逗号分隔，无品牌填店铺名
   mainCategoryEn String
-  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  agentInfo AgentInfo @relation(fields: [agentInfoId], references: [id], onDelete: Cascade)
   products Product[]
-  agentInfos AgentInfo[]
   createdAt DateTime @default(now())
-  @@index([clientId]) @@index([platform])
+  @@index([agentInfoId]) @@index([clientId]) @@index([platform])
 }
 
 model Product {
@@ -201,16 +201,16 @@ model Product {
 
 model AgentInfo {
   id String @id @default(uuid())
-  shopId String
-  clientId String                  // 冗余自 shop.clientId
+  clientId String
   country AgentCountry
   expectedEffectiveDate DateTime
   agentYears Int
   expiresAt DateTime                // = expectedEffectiveDate + agentYears，后端计算
   agentCompany AgentCompany           // 枚举值，按 country 过滤可选项，见 @funtax/shared 的 AGENT_COUNTRY_COMPANIES
-  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  shops Shop[]                      // 一条代理信息可覆盖多个店铺
   createdAt DateTime @default(now())
-  @@index([shopId]) @@index([clientId]) @@index([country]) @@index([expiresAt])
+  @@index([clientId]) @@index([country]) @@index([expiresAt])
 }
 
 model Attachment {
@@ -247,8 +247,8 @@ flowchart TD
     C --> D
     D --> D1["上传身份证正/反面→OCR"]
     D1 --> D3["法人信息表单(OCR回填,可编辑)"]
-    D3 --> E["Step3 店铺信息(可新增多个店铺)"]
-    E --> F["每个店铺内: 产品信息[](非必填,可多条) + 代理信息[](可多条)"]
+    D3 --> E["Step3 代理信息(可新增多条代理信息)"]
+    E --> F["每条代理信息内: 店铺[](可多个,每个店铺内含产品信息[]非必填可多条)"]
     F -->|提交| G["POST /api/clients 一次性创建 Client+全部子表"]
 ```
 
@@ -258,7 +258,7 @@ flowchart TD
 
 **Step2（法人/个人信息）**：上传身份证正/反面 → OCR 回填法人中文名/姓氏拼音/名字拼音/身份证号/身份证地址，同样"识别失败→提示语+可编辑"。个人类型从 Step0 直接跳到此步，标题改为"个人信息"，复用同一表单组件。
 
-**Step3（店铺信息）**：`Form.List` 支持新增多个店铺；每个店铺内再嵌套两个 `Form.List`：产品信息（非必填，可多条）、代理信息（可多条，`有效期限` 前端按"生效日期+代理年限"自动算出只读展示，提交时后端复算落库）。
+**Step3（代理信息）**：`Form.List` 支持新增多条代理信息（`有效期限` 前端按"生效日期+代理年限"自动算出只读展示，提交时后端复算落库）；每条代理信息内再嵌套一个 `Form.List`：店铺（可多个，一条代理信息可覆盖多个店铺），每个店铺内又嵌套产品信息（非必填，可多条）。
 
 ---
 

@@ -38,44 +38,43 @@ export class ClientsService {
           updatedById: actor.id,
           companyInfo: { create: payload.companyInfo },
           legalRepInfo: { create: payload.legalRepInfo },
-          shops: {
-            create: payload.shops.map((shop) => ({
-              platform: shop.platform,
-              shopId: shop.shopId,
-              shopName: shop.shopName,
-              shopUrl: shop.shopUrl,
-              brandNames: shop.brandNames,
-              mainCategoryEn: shop.mainCategoryEn,
-              products: shop.products
+          agentInfos: {
+            create: payload.agentInfos.map((agent) => ({
+              country: agent.country,
+              agentCompany: agent.agentCompany,
+              agentYears: agent.agentYears,
+              expectedEffectiveDate: new Date(agent.expectedEffectiveDate),
+              expiresAt: addYears(new Date(agent.expectedEffectiveDate), agent.agentYears),
+              shops: agent.shops
                 ? {
-                    create: shop.products.map((p) => ({ ...p, clientId: '' })),
-                  }
-                : undefined,
-              agentInfos: shop.agentInfos
-                ? {
-                    create: shop.agentInfos.map((a) => ({
-                      country: a.country,
-                      agentCompany: a.agentCompany,
-                      agentYears: a.agentYears,
-                      expectedEffectiveDate: new Date(a.expectedEffectiveDate),
-                      expiresAt: addYears(new Date(a.expectedEffectiveDate), a.agentYears),
+                    create: agent.shops.map((shop) => ({
+                      platform: shop.platform,
+                      shopId: shop.shopId,
+                      shopName: shop.shopName,
+                      shopUrl: shop.shopUrl,
+                      brandNames: shop.brandNames,
+                      mainCategoryEn: shop.mainCategoryEn,
                       clientId: '',
+                      products: shop.products
+                        ? { create: shop.products.map((p) => ({ ...p, clientId: '' })) }
+                        : undefined,
                     })),
                   }
                 : undefined,
             })),
           },
         },
-        include: { shops: true },
+        include: { agentInfos: { include: { shops: { include: { products: true } } } } },
       });
 
-      // Product/AgentInfo 冗余 clientId 需在拿到 client.id 后回填（嵌套 create 时尚不知道 id）
-      await tx.product.updateMany({
-        where: { shopId: { in: created.shops.map((s) => s.id) } },
+      // Shop/Product 冗余 clientId 需在拿到 client.id 后回填（嵌套 create 时尚不知道 id）
+      const shopIds = created.agentInfos.flatMap((a) => a.shops.map((s) => s.id));
+      await tx.shop.updateMany({
+        where: { id: { in: shopIds } },
         data: { clientId: created.id },
       });
-      await tx.agentInfo.updateMany({
-        where: { shopId: { in: created.shops.map((s) => s.id) } },
+      await tx.product.updateMany({
+        where: { shopId: { in: shopIds } },
         data: { clientId: created.id },
       });
 
@@ -117,7 +116,11 @@ export class ClientsService {
       this.prisma.client.count({ where }),
       this.prisma.client.findMany({
         where,
-        include: { companyInfo: true, owner: true, shops: { select: { id: true } } },
+        include: {
+          companyInfo: true,
+          owner: true,
+          agentInfos: { include: { shops: { select: { id: true } } } },
+        },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -138,7 +141,7 @@ export class ClientsService {
         nameEn: c.companyInfo?.nameEn ?? null,
         ownerId: c.ownerId,
         ownerNickname: c.owner.nickname,
-        shopCount: c.shops.length,
+        shopCount: c.agentInfos.reduce((sum, a) => sum + a.shops.length, 0),
         createdAt: c.createdAt.toISOString(),
       })),
     };
@@ -150,7 +153,7 @@ export class ClientsService {
       include: {
         companyInfo: true,
         legalRepInfo: true,
-        shops: { include: { products: true, agentInfos: true } },
+        agentInfos: { include: { shops: { include: { products: true } } } },
         attachments: true,
       },
     });

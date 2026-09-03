@@ -56,13 +56,6 @@ export class ProductDto {
   @IsOptional() @IsBoolean() hasBattery?: boolean;
 }
 
-export class AgentInfoDto {
-  @IsEnum(AgentCountry, { message: '代理国家不合法' }) country!: AgentCountry;
-  @IsDateString({}, { message: '生效日期格式不正确' }) expectedEffectiveDate!: string;
-  @IsInt() @Min(1) @Max(20) agentYears!: number;
-  @IsEnum(AgentCompany, { message: '代理公司不合法' }) agentCompany!: AgentCompany;
-}
-
 export class ShopDto {
   @IsEnum(Platform, { message: '平台不合法' }) platform!: Platform;
   @IsOptional() @IsString() @MaxLength(100) shopId?: string;
@@ -76,12 +69,19 @@ export class ShopDto {
   @ValidateNested({ each: true })
   @Type(() => ProductDto)
   products?: ProductDto[];
+}
+
+export class AgentInfoDto {
+  @IsEnum(AgentCountry, { message: '代理国家不合法' }) country!: AgentCountry;
+  @IsDateString({}, { message: '生效日期格式不正确' }) expectedEffectiveDate!: string;
+  @IsInt() @Min(1) @Max(20) agentYears!: number;
+  @IsEnum(AgentCompany, { message: '代理公司不合法' }) agentCompany!: AgentCompany;
 
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => AgentInfoDto)
-  agentInfos?: AgentInfoDto[];
+  @Type(() => ShopDto)
+  shops?: ShopDto[];
 }
 
 export class ClientPayloadDto {
@@ -98,8 +98,8 @@ export class ClientPayloadDto {
   @ValidateNested() @Type(() => LegalRepresentativeDto) legalRepInfo!: LegalRepresentativeDto;
 
   @IsArray()
-  @ArrayMinSize(1, { message: '至少需要一个店铺' })
+  @ArrayMinSize(1, { message: '至少需要一条代理信息' })
   @ValidateNested({ each: true })
-  @Type(() => ShopDto)
-  shops!: ShopDto[];
+  @Type(() => AgentInfoDto)
+  agentInfos!: AgentInfoDto[];
 }

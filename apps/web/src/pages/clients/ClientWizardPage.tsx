@@ -13,7 +13,7 @@ const STEP_ITEMS = [
   { title: '注册类型' },
   { title: '主体信息' },
   { title: '法人信息' },
-  { title: '店铺信息' },
+  { title: '代理信息' },
 ];
 
 /** 新建授权客户向导：4 步流程，个人客户跳过"主体信息"。全程走 Zustand store，最后一次性提交。 */
@@ -58,8 +58,8 @@ export function ClientWizardPage() {
       void message.error('请先选择注册类型');
       return;
     }
-    if (state.shops.length === 0) {
-      void message.error('请至少添加一个店铺');
+    if (state.agentInfos.length === 0) {
+      void message.error('请至少添加一条代理信息');
       return;
     }
     const payload: ClientPayload = {
@@ -78,27 +78,27 @@ export function ClientWizardPage() {
         idAddressCn: state.legalRepInfo.idAddressCn ?? '',
         ...state.legalRepInfo,
       },
-      shops: state.shops.map((shop) => ({
-        platform: shop.platform,
-        shopId: shop.shopId,
-        shopName: shop.shopName,
-        shopUrl: shop.shopUrl,
-        brandNames: shop.brandNames,
-        mainCategoryEn: shop.mainCategoryEn,
-        products: shop.products.map((p) => ({
-          platform: p.platform,
-          productNameCn: p.productNameCn,
-          productNameEn: p.productNameEn,
-          category: p.category,
-          asinOrSku: p.asinOrSku,
-          productUrl: p.productUrl,
-          hasBattery: p.hasBattery,
-        })),
-        agentInfos: shop.agentInfos.map((a) => ({
-          country: a.country,
-          expectedEffectiveDate: a.expectedEffectiveDate,
-          agentYears: a.agentYears,
-          agentCompany: a.agentCompany,
+      agentInfos: state.agentInfos.map((a) => ({
+        country: a.country,
+        expectedEffectiveDate: a.expectedEffectiveDate,
+        agentYears: a.agentYears,
+        agentCompany: a.agentCompany,
+        shops: a.shops.map((shop) => ({
+          platform: shop.platform,
+          shopId: shop.shopId,
+          shopName: shop.shopName,
+          shopUrl: shop.shopUrl,
+          brandNames: shop.brandNames,
+          mainCategoryEn: shop.mainCategoryEn,
+          products: shop.products.map((p) => ({
+            platform: p.platform,
+            productNameCn: p.productNameCn,
+            productNameEn: p.productNameEn,
+            category: p.category,
+            asinOrSku: p.asinOrSku,
+            productUrl: p.productUrl,
+            hasBattery: p.hasBattery,
+          })),
         })),
       })),
     };

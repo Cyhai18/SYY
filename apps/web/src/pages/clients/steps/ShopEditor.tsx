@@ -1,28 +1,14 @@
 import { Button, Col, Form, Input, Row, Select, Table } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import {
-  AGENT_COMPANY_LABELS,
-  AGENT_COUNTRY_COMPANIES,
-  AGENT_COUNTRY_LABELS,
-  PLATFORM_LABELS,
-  type AgentCompany,
-  type AgentCountry,
-} from '@funtax/shared';
+import { PLATFORM_LABELS } from '@funtax/shared';
 import { nextKey, type ShopDraft } from '../../../store/client-wizard-store';
 
 const PLATFORM_OPTIONS = Object.entries(PLATFORM_LABELS).map(([value, label]) => ({
   value,
   label,
 }));
-const AGENT_COUNTRY_OPTIONS = Object.entries(AGENT_COUNTRY_LABELS).map(([value, label]) => ({
-  value,
-  label,
-}));
-/** 按代理国家过滤代理公司下拉选项。 */
-const agentCompanyOptions = (country: AgentCountry) =>
-  AGENT_COUNTRY_COMPANIES[country].map((value) => ({ value, label: AGENT_COMPANY_LABELS[value] }));
 
-/** 单个店铺的表单块：店铺基础信息 + 产品明细表 + 代理信息明细表（均支持多条）。 */
+/** 单个店铺的表单块：店铺基础信息 + 产品明细表（支持多条）。 */
 export function ShopEditor({
   shop,
   onChange,
@@ -44,20 +30,6 @@ export function ShopEditor({
           category: '',
           asinOrSku: '',
           productUrl: '',
-        },
-      ],
-    });
-
-  const addAgent = () =>
-    update({
-      agentInfos: [
-        ...shop.agentInfos,
-        {
-          key: nextKey(),
-          country: 'GB',
-          expectedEffectiveDate: '',
-          agentYears: 1,
-          agentCompany: agentCompanyOptions('GB')[0]?.value ?? 'OVERSEA_WALKERS_GB',
         },
       ],
     });
@@ -238,118 +210,6 @@ export function ShopEditor({
         footer={() => (
           <Button type="dashed" block icon={<PlusOutlined />} onClick={addProduct}>
             新增产品
-          </Button>
-        )}
-        style={{ marginBottom: 16 }}
-      />
-
-      <Table
-        size="small"
-        title={() => '代理信息'}
-        pagination={false}
-        dataSource={shop.agentInfos}
-        rowKey="key"
-        columns={[
-          {
-            title: '代理国家',
-            dataIndex: 'country',
-            width: 130,
-            render: (v, r) => (
-              <Select
-                size="small"
-                style={{ width: 110 }}
-                value={v}
-                options={AGENT_COUNTRY_OPTIONS}
-                onChange={(val) =>
-                  update({
-                    agentInfos: shop.agentInfos.map((a) =>
-                      a.key === r.key
-                        ? { ...a, country: val, agentCompany: agentCompanyOptions(val)[0]?.value }
-                        : a,
-                    ),
-                  })
-                }
-              />
-            ),
-          },
-          {
-            title: '预计生效日期',
-            dataIndex: 'expectedEffectiveDate',
-            render: (v, r) => (
-              <Input
-                size="small"
-                type="date"
-                value={v}
-                onChange={(e) =>
-                  update({
-                    agentInfos: shop.agentInfos.map((a) =>
-                      a.key === r.key ? { ...a, expectedEffectiveDate: e.target.value } : a,
-                    ),
-                  })
-                }
-              />
-            ),
-          },
-          {
-            title: '代理年限',
-            dataIndex: 'agentYears',
-            width: 100,
-            render: (v, r) => (
-              <Input
-                size="small"
-                type="number"
-                min={1}
-                max={20}
-                value={v}
-                onChange={(e) =>
-                  update({
-                    agentInfos: shop.agentInfos.map((a) =>
-                      a.key === r.key ? { ...a, agentYears: Number(e.target.value) } : a,
-                    ),
-                  })
-                }
-              />
-            ),
-          },
-          {
-            title: '代理公司',
-            dataIndex: 'agentCompany',
-            width: 220,
-            render: (v, r) => (
-              <Select<AgentCompany>
-                size="small"
-                style={{ width: 200 }}
-                value={v}
-                options={agentCompanyOptions(r.country)}
-                onChange={(val) =>
-                  update({
-                    agentInfos: shop.agentInfos.map((a) =>
-                      a.key === r.key ? { ...a, agentCompany: val } : a,
-                    ),
-                  })
-                }
-              />
-            ),
-          },
-          {
-            title: '',
-            dataIndex: 'actions',
-            width: 48,
-            render: (_, r) => (
-              <Button
-                type="text"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() =>
-                  update({ agentInfos: shop.agentInfos.filter((a) => a.key !== r.key) })
-                }
-              />
-            ),
-          },
-        ]}
-        footer={() => (
-          <Button type="dashed" block icon={<PlusOutlined />} onClick={addAgent}>
-            新增代理
           </Button>
         )}
       />
