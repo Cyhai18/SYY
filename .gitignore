@@ -12,3 +12,4 @@ coverage
 *.tsbuildinfo
 services/*/.venv
 services/*/__pycache__
+apps/api/uploads

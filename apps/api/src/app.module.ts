@@ -15,6 +15,7 @@ import { SmsModule } from './sms/sms.module';
 import { UsersModule } from './users/users.module';
 import { ClientsModule } from './clients/clients.module';
 import { OcrModule } from './ocr/ocr.module';
+import { CertificateModule } from './certificate/certificate.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { OcrModule } from './ocr/ocr.module';
     UsersModule,
     ClientsModule,
     OcrModule,
+    CertificateModule,
   ],
   controllers: [AppController],
   providers: [

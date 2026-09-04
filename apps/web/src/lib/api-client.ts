@@ -86,11 +86,55 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return (await response.json()) as T;
 }
 
+/** 下载二进制响应（如证书 PDF），复用 access token 与 401 自动刷新逻辑，但不按 JSON 解析响应体。 */
+async function requestBinary(
+  path: string,
+  options: { method?: 'GET' | 'POST'; body?: unknown } = {},
+): Promise<{ blob: Blob; fileName: string | null }> {
+  const { method = 'POST', body } = options;
+  const accessToken = useAuthStore.getState().accessToken;
+
+  const doFetch = (token: string | null) =>
+    fetch(`${API_BASE}${path}`, {
+      method,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+  let response = await doFetch(accessToken);
+
+  if (response.status === 401) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      useAuthStore.getState().setAccessToken(newToken);
+      response = await doFetch(newToken);
+    } else {
+      useAuthStore.getState().clear();
+    }
+  }
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ message: '请求失败' }));
+    const message = Array.isArray(payload?.message) ? payload.message.join('；') : payload?.message;
+    throw new ApiError(response.status, message ?? '请求失败');
+  }
+
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+  const fileName = match ? decodeURIComponent(match[1]) : null;
+  return { blob: await response.blob(), fileName };
+}
+
 export const apiClient = {
   get: <T>(path: string) => request<T>(path, { method: 'GET' }),
   post: <T>(path: string, body?: unknown, opts?: Partial<RequestOptions>) =>
     request<T>(path, { method: 'POST', body, ...opts }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
+  postBinary: (path: string, body?: unknown) => requestBinary(path, { method: 'POST', body }),
 };
 
 export type { AuthResult };

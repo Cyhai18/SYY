@@ -48,4 +48,8 @@ export const clientsApi = {
   create: (payload: ClientPayload) => apiClient.post<ClientDetail>('/clients', payload),
 
   get: (id: string) => apiClient.get<ClientDetail>(`/clients/${id}`),
+
+  /** 生成证书 PDF，见 docs/certificate-generation-design.md */
+  generateCertificate: (agentInfoId: string) =>
+    apiClient.postBinary(`/agent-infos/${agentInfoId}/certificate`),
 };

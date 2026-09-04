@@ -15,7 +15,13 @@ import {
   message,
 } from 'antd';
 import type { TablePaginationConfig } from 'antd/es/table';
-import { EyeOutlined, FileProtectOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import {
+  EyeOutlined,
+  FilePdfOutlined,
+  FileProtectOutlined,
+  PlusOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
   AGENT_COMPANY_LABELS,
@@ -65,6 +71,7 @@ export function ClientListPage() {
   const [items, setItems] = useState<ClientListItem[]>([]);
   const [detailClientId, setDetailClientId] = useState<string | null>(null);
   const [certificateTarget, setCertificateTarget] = useState<CertificateTarget | null>(null);
+  const [generatingAgentInfoId, setGeneratingAgentInfoId] = useState<string | null>(null);
   const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -95,6 +102,26 @@ export function ClientListPage() {
     },
     [page, pageSize, filters],
   );
+
+  const handleGenerateCertificate = useCallback(async (agentInfoId: string) => {
+    setGeneratingAgentInfoId(agentInfoId);
+    try {
+      const { blob, fileName } = await clientsApi.generateCertificate(agentInfoId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName ?? `${agentInfoId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      void message.success('证书生成成功');
+    } catch {
+      void message.error('证书生成失败');
+    } finally {
+      setGeneratingAgentInfoId(null);
+    }
+  }, []);
 
   useEffect(() => {
     void load({ page: 1 });
@@ -322,21 +349,32 @@ export function ClientListPage() {
                   {
                     title: '操作',
                     key: 'action',
-                    width: 120,
+                    width: 200,
                     render: (_, agentInfo) => (
-                      <Button
-                        type="link"
-                        size="small"
-                        icon={<FileProtectOutlined />}
-                        onClick={() =>
-                          setCertificateTarget({
-                            clientName: r.nameCn ?? r.nameEn ?? '',
-                            agentInfo,
-                          })
-                        }
-                      >
-                        查看证书
-                      </Button>
+                      <Space size={0}>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<FileProtectOutlined />}
+                          onClick={() =>
+                            setCertificateTarget({
+                              clientName: r.nameCn ?? r.nameEn ?? '',
+                              agentInfo,
+                            })
+                          }
+                        >
+                          查看证书
+                        </Button>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<FilePdfOutlined />}
+                          loading={generatingAgentInfoId === agentInfo.id}
+                          onClick={() => void handleGenerateCertificate(agentInfo.id)}
+                        >
+                          生成证书
+                        </Button>
+                      </Space>
                     ),
                   },
                 ]}

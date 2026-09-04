@@ -32,6 +32,7 @@ model User {
   ownedClients   Client[] @relation("ClientOwner")
   createdClients Client[] @relation("ClientCreatedBy")
   updatedClients Client[] @relation("ClientUpdatedBy")
+  certificates   Certificate[]
 }
 
 model ActionLog {
@@ -189,6 +190,7 @@ model AgentInfo {
   agentCompany          AgentCompany
   client                Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   shops                 Shop[]
+  certificates          Certificate[]
 
   createdAt DateTime @default(now())
 
@@ -251,4 +253,29 @@ model Attachment {
 
   @@index([clientId])
   @@index([type])
+}
+
+// ---------------------------------------------------------------------------
+// 授权证书生成（见 docs/certificate-generation-design.md）
+// ---------------------------------------------------------------------------
+
+// 每次成功生成一份证书落一行记录，兼作生成结果归档
+model Certificate {
+  id              String    @id @default(uuid())
+  agentInfoId     String
+  agreementNumber String    @unique // 2026-09-03-0005
+  fileUrl         String?   @db.Text // 生成的 PDF 本地磁盘存储路径，后续接入对象存储后改存 URL
+  generatedById   String? // 操作人
+  agentInfo       AgentInfo @relation(fields: [agentInfoId], references: [id], onDelete: Cascade)
+  generatedBy     User?     @relation(fields: [generatedById], references: [id])
+  createdAt       DateTime  @default(now())
+
+  @@index([agentInfoId])
+  @@index([createdAt])
+}
+
+// Agreement Number 按天原子递增计数器，避免并发下"先 COUNT 再 +1"的竞态
+model CertificateDailyCounter {
+  day String @id // "2026-09-03"
+  seq Int    @default(0)
 }
