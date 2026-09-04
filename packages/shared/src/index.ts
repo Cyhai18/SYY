@@ -199,6 +199,24 @@ export interface ClientPayload {
   agentInfos: AgentInfoPayload[];
 }
 
+/** 客户列表行中，某一条代理信息的摘要（展开子表格用），支持针对该条代理信息单独发起操作（如查看证书）。 */
+export interface AgentInfoSummary {
+  id: string;
+  country: AgentCountry;
+  agentCompany: AgentCompany;
+  expectedEffectiveDate: string;
+  expiresAt: string;
+  shopCount: number;
+}
+
+/**
+ * 列表页第一/二列展示的"名称"：企业客户取 `CompanyInfo.nameCn/nameEn`；
+ * 个人客户没有英文名概念，中文列取法人姓名（`LegalRepresentative.nameCn`），
+ * 英文列取法人姓名拼音（`LegalRepresentative.namePinyin`）代替。
+ *
+ * 一个客户可能有多条代理信息，列表以客户为主行、代理信息作为可展开的子表格展示，
+ * 详见 `agentInfos`；子表格每一行都可独立发起"查看证书"等操作。
+ */
 export interface ClientListItem {
   id: string;
   clientType: ClientType;
@@ -210,13 +228,49 @@ export interface ClientListItem {
   ownerId: string;
   ownerNickname: string;
   shopCount: number;
+  /** 客户提交（创建）日期 */
+  createdAt: string;
+  /** 该客户下的全部代理信息，按创建时间升序排列；客户尚未录入代理信息时为空数组 */
+  agentInfos: AgentInfoSummary[];
+}
+
+export type AttachmentType = 'BUSINESS_LICENSE' | 'ID_CARD_FRONT' | 'ID_CARD_BACK' | 'OTHER';
+
+export const ATTACHMENT_TYPE_LABELS: Record<AttachmentType, string> = {
+  BUSINESS_LICENSE: '营业执照',
+  ID_CARD_FRONT: '身份证正面',
+  ID_CARD_BACK: '身份证反面',
+  OTHER: '其他',
+};
+
+export interface AttachmentItem {
+  id: string;
+  type: AttachmentType;
+  fileUrl: string;
   createdAt: string;
 }
 
-export interface ClientDetail extends ClientPayload {
+export interface ProductDetail extends ProductPayload {
+  id: string;
+}
+
+export interface ShopDetail extends ShopPayload {
+  id: string;
+  products: ProductDetail[];
+}
+
+export interface AgentInfoDetail extends Omit<AgentInfoPayload, 'shops'> {
+  id: string;
+  expiresAt: string;
+  shops: ShopDetail[];
+}
+
+export interface ClientDetail extends Omit<ClientPayload, 'agentInfos'> {
   id: string;
   status: ClientStatus;
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+  agentInfos: AgentInfoDetail[];
+  attachments: AttachmentItem[];
 }

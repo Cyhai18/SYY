@@ -30,8 +30,50 @@ body {
 
 .app-shell {
   min-height: 100vh;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-body {
+  flex: 1;
+  background: transparent;
+}
+
+.app-sider {
+  position: relative;
+  border-right: 1px solid rgb(from var(--color-primary) r g b / 0.1);
+  background: var(--color-surface) !important;
+  overflow: visible !important;
+}
+
+.app-sider-trigger {
+  position: absolute;
+  top: 50%;
+  right: -11px;
+  transform: translateY(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgb(from var(--color-primary) r g b / 0.14);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-body);
+  font-size: 11px;
+  box-shadow: 0 1px 2px rgba(29, 41, 57, 0.08);
+  cursor: pointer;
+  transition:
+    color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-sider-trigger:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 6px rgba(37, 99, 201, 0.16);
 }
 
 .app-header {
@@ -56,32 +98,15 @@ body {
   width: auto;
 }
 
-.app-nav {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 3);
-}
-
-.app-nav-link {
-  color: var(--color-body);
-  font-size: 14px;
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.app-nav-link--active {
-  color: var(--color-primary);
-}
-
 .app-main {
-  width: min(960px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: calc(var(--space) * 6) 0;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: calc(var(--space) * 6) calc(var(--space) * 4);
 }
 
 .app-main:has(.clients-page),
 .app-main:has(.client-wizard-page) {
-  width: 100%;
   padding: calc(var(--space) * 4) calc(var(--space) * 3);
 }
 
@@ -116,12 +141,6 @@ body {
 
 .app-panel {
   margin-top: calc(var(--space) * 4);
-}
-
-.app-footer {
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
-  color: var(--color-body);
-  font-size: 13px;
 }
 
 @media (max-width: 767px) {
@@ -212,8 +231,7 @@ body {
 }
 
 .clients-page {
-  width: min(1200px, calc(100% - 32px));
-  margin: 0 auto;
+  width: 100%;
   display: grid;
   gap: calc(var(--space) * 2);
 }

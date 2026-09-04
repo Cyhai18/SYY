@@ -100,13 +100,24 @@ export class ClientsService {
       ...(actor.role === Role.USER ? { ownerId: actor.id } : {}),
       ...(query.clientType ? { clientType: query.clientType } : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(query.agentCountry ? { agentInfos: { some: { country: query.agentCountry } } } : {}),
+      ...(query.submittedFrom || query.submittedTo
+        ? {
+            createdAt: {
+              ...(query.submittedFrom ? { gte: new Date(query.submittedFrom) } : {}),
+              // 结束日期按当天 23:59:59.999 计算，保证区间含边界当天
+              ...(query.submittedTo ? { lte: new Date(`${query.submittedTo}T23:59:59.999`) } : {}),
+            },
+          }
+        : {}),
       ...(query.keyword
         ? {
+            // 客户名称搜索：企业客户匹配公司中英文名，个人客户匹配法人姓名（中文）/拼音
             OR: [
-              { phone: { contains: query.keyword } },
               { companyInfo: { nameCn: { contains: query.keyword } } },
               { companyInfo: { nameEn: { contains: query.keyword } } },
-              { companyInfo: { creditCode: { contains: query.keyword } } },
+              { legalRepInfo: { nameCn: { contains: query.keyword } } },
+              { legalRepInfo: { namePinyin: { contains: query.keyword } } },
             ],
           }
         : {}),
@@ -118,8 +129,12 @@ export class ClientsService {
         where,
         include: {
           companyInfo: true,
+          legalRepInfo: true,
           owner: true,
-          agentInfos: { include: { shops: { select: { id: true } } } },
+          agentInfos: {
+            include: { shops: { select: { id: true } } },
+            orderBy: { createdAt: 'asc' },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
@@ -137,12 +152,20 @@ export class ClientsService {
         phone: c.phone,
         email: c.email,
         status: c.status,
-        nameCn: c.companyInfo?.nameCn ?? null,
-        nameEn: c.companyInfo?.nameEn ?? null,
+        nameCn: c.companyInfo?.nameCn ?? c.legalRepInfo?.nameCn ?? null,
+        nameEn: c.companyInfo?.nameEn ?? c.legalRepInfo?.namePinyin ?? null,
         ownerId: c.ownerId,
         ownerNickname: c.owner.nickname,
         shopCount: c.agentInfos.reduce((sum, a) => sum + a.shops.length, 0),
         createdAt: c.createdAt.toISOString(),
+        agentInfos: c.agentInfos.map((a) => ({
+          id: a.id,
+          country: a.country,
+          agentCompany: a.agentCompany,
+          expectedEffectiveDate: a.expectedEffectiveDate.toISOString(),
+          expiresAt: a.expiresAt.toISOString(),
+          shopCount: a.shops.length,
+        })),
       })),
     };
   }

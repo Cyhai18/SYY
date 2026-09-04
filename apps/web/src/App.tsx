@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, ConfigProvider, Space, Typography } from 'antd';
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Alert, Button, ConfigProvider, Layout, Menu, Space, Typography } from 'antd';
+import {
+  HomeOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  TeamOutlined,
+} from '@ant-design/icons';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { APP_NAME, type HealthResponse } from '@funtax/shared';
 import { antdTheme } from './theme';
 import pcLogo from '@brand/pc_logo.png';
@@ -55,6 +61,7 @@ export function App() {
             </RequireAuth>
           }
         />
+
         <Route
           path="/"
           element={
@@ -74,35 +81,56 @@ export function App() {
 function AppShell({ children }: { children: React.ReactNode }) {
   const initialized = useAuthStore((s) => s.initialized);
   const location = useLocation();
+  const navigate = useNavigate();
+  const [collapsed, setCollapsed] = useState(false);
   if (!initialized) {
     return null;
   }
   const isClients = location.pathname.startsWith('/clients');
+  const selectedKey = isClients ? 'clients' : 'home';
+
   return (
     <div className="app-shell">
       <header className="app-header">
         <Space size="large" align="center">
           <img className="app-logo app-logo--desktop" src={pcLogo} alt={APP_NAME} />
           <img className="app-logo app-logo--mobile" src={mobileLogo} alt={APP_NAME} />
-          <nav className="app-nav">
-            <Link
-              to="/"
-              className={!isClients ? 'app-nav-link app-nav-link--active' : 'app-nav-link'}
-            >
-              首页
-            </Link>
-            <Link
-              to="/clients"
-              className={isClients ? 'app-nav-link app-nav-link--active' : 'app-nav-link'}
-            >
-              授权客户
-            </Link>
-          </nav>
         </Space>
         <UserMenu />
       </header>
-      <main className="app-main">{children}</main>
-      <footer className="app-footer">{APP_NAME} · 跨境卖家税务 SaaS</footer>
+      <Layout className="app-body">
+        <Layout.Sider
+          className="app-sider"
+          theme="light"
+          collapsible
+          collapsed={collapsed}
+          trigger={null}
+          width={200}
+        >
+          <Menu
+            mode="inline"
+            selectedKeys={[selectedKey]}
+            style={{ borderInlineEnd: 'none' }}
+            items={[
+              { key: 'home', icon: <HomeOutlined />, label: '首页', onClick: () => navigate('/') },
+              {
+                key: 'clients',
+                icon: <TeamOutlined />,
+                label: '授权客户',
+                onClick: () => navigate('/clients'),
+              },
+            ]}
+          />
+          <button
+            type="button"
+            className="app-sider-trigger"
+            onClick={() => setCollapsed((v) => !v)}
+          >
+            {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          </button>
+        </Layout.Sider>
+        <Layout.Content className="app-main">{children}</Layout.Content>
+      </Layout>
     </div>
   );
 }
