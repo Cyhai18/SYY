@@ -25,8 +25,21 @@ export const authApi = {
   me: () => apiClient.get<PublicUser>('/users/me'),
 };
 
-/** 应用启动时静默调用一次，用 Cookie 里的 Refresh Token 尝试恢复登录态。 */
-export async function bootstrapAuth(): Promise<void> {
+let bootstrapPromise: Promise<void> | null = null;
+
+/** 应用启动时静默调用一次，用 Cookie 里的 Refresh Token 尝试恢复登录态。
+ *  用模块级 Promise 去重：同一时间内的重复调用（如 StrictMode 双调用、多组件挂载）复用同一次请求，
+ *  避免并发 /auth/refresh 因 Refresh Token 一次性轮换而互相踩踏，导致刚登录就被清空登录态。 */
+export function bootstrapAuth(): Promise<void> {
+  if (!bootstrapPromise) {
+    bootstrapPromise = doBootstrapAuth().finally(() => {
+      bootstrapPromise = null;
+    });
+  }
+  return bootstrapPromise;
+}
+
+async function doBootstrapAuth(): Promise<void> {
   const { setAuth, clear, setInitialized } = useAuthStore.getState();
   try {
     const { accessToken } = await apiClient.post<{ accessToken: string }>(
