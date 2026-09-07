@@ -9,6 +9,7 @@
     "dev": "turbo dev",
     "dev:web": "pnpm --filter @funtax/web dev",
     "dev:api": "pnpm --filter @funtax/api dev",
+    "dev:all": "bash scripts/dev-all.sh",
     "build": "turbo build",
     "lint": "turbo lint",
     "format": "prettier --write .",

@@ -1,26 +1,26 @@
 """
-授权证书生成微服务：见 docs/certificate-generation-design.md 第五节。
+授权证书生成微服务：见 docs/certificate-generation-design.md 第五节，
+转 PDF 部分的技术选型见 docs/doc-service-html-weasyprint-poc.md。
 
 按 `templateKey`（= AgentCompany 枚举值）选中对应 .docx 模板，用 docxtpl（基于
-Jinja2）渲染占位符与表格循环（shops），再用 LibreOffice headless 模式转换为 PDF
-并返回二进制流。模板中的 Jinja2 占位符已直接写入 `templates/*.docx`（见第四节），
-本服务不做字段名转换，`apps/api` 侧负责组装好符合模板占位符命名的渲染数据。
+Jinja2）渲染占位符与表格循环（shops），再调用 Gotenberg（基于 LibreOffice 的
+文档转换 HTTP 微服务，见 GOTENBERG_URL）转换为 PDF 并返回二进制流。模板中的
+Jinja2 占位符已直接写入 `templates/*.docx`（见第四节），本服务不做字段名转换，
+`apps/api` 侧负责组装好符合模板占位符命名的渲染数据。
 
-证书生成频率低，用简单的 asyncio.Lock 避免并发请求同时调用 soffice 冲突，
-不引入重型任务队列。
+Gotenberg 内部自行管理 LibreOffice 常驻实例的并发与健康检查，本服务不需要再
+自己维护 soffice 子进程锁/重启逻辑。
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import shutil
-import subprocess
 import tempfile
 import uuid
 from pathlib import Path
 
+import httpx
 from docxtpl import DocxTemplate
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -76,9 +76,10 @@ class GenerateRequest(BaseModel):
     data: CertificateData
 
 
-# 转 PDF 是 CPU/IO 密集的外部进程调用，同一时间只允许一个 soffice 实例运行，
-# 避免并发请求争用同一份 profile 目录导致锁文件冲突/僵死进程。
-_soffice_lock = asyncio.Lock()
+GOTENBERG_URL = os.environ.get("GOTENBERG_URL", "http://localhost:3000")
+DOCX_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
 
 @app.get("/health")
@@ -92,37 +93,22 @@ def _render_docx(template_path: Path, data: CertificateData, out_path: Path) -> 
     tpl.save(str(out_path))
 
 
-def _convert_to_pdf(docx_path: Path, out_dir: Path) -> Path:
-    profile_dir = Path(tempfile.gettempdir()) / f"lo_{uuid.uuid4().hex}"
-    soffice_bin = os.environ.get("SOFFICE_BIN", "soffice")
+async def _convert_to_pdf(docx_path: Path) -> bytes:
+    """通过 Gotenberg（LibreOffice HTTP 微服务）将 docx 转为 pdf。"""
     try:
-        subprocess.run(
-            [
-                soffice_bin,
-                "--headless",
-                f"-env:UserInstallation=file://{profile_dir}",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                str(out_dir),
-                str(docx_path),
-            ],
-            timeout=30,
-            check=True,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        logger.exception("soffice 转 PDF 失败: %s", exc.stderr)
-        raise HTTPException(status_code=500, detail="生成 PDF 失败") from exc
-    except subprocess.TimeoutExpired as exc:
+        async with httpx.AsyncClient(timeout=30) as client:
+            with open(docx_path, "rb") as f:
+                resp = await client.post(
+                    f"{GOTENBERG_URL}/forms/libreoffice/convert",
+                    files={"files": (docx_path.name, f, DOCX_MIME)},
+                )
+            resp.raise_for_status()
+            return resp.content
+    except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail="生成 PDF 超时") from exc
-    finally:
-        shutil.rmtree(profile_dir, ignore_errors=True)
-
-    pdf_path = out_dir / (docx_path.stem + ".pdf")
-    if not pdf_path.exists():
-        raise HTTPException(status_code=500, detail="生成 PDF 失败：未找到输出文件")
-    return pdf_path
+    except httpx.HTTPError as exc:
+        logger.exception("调用 Gotenberg 转 PDF 失败: %s", exc)
+        raise HTTPException(status_code=500, detail="生成 PDF 失败") from exc
 
 
 @app.post("/certificate/generate")
@@ -140,10 +126,6 @@ async def generate_certificate(req: GenerateRequest):
             logger.exception("渲染 docx 失败")
             raise HTTPException(status_code=500, detail=f"渲染失败: {exc}") from exc
 
-        async with _soffice_lock:
-            pdf_path = await asyncio.get_event_loop().run_in_executor(
-                None, _convert_to_pdf, docx_path, tmp_dir
-            )
-        pdf_bytes = pdf_path.read_bytes()
+        pdf_bytes = await _convert_to_pdf(docx_path)
 
     return Response(content=pdf_bytes, media_type="application/pdf")
