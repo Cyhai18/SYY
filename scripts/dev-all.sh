@@ -38,7 +38,7 @@ ensure_venv() {
 if ! command -v docker >/dev/null 2>&1; then
   echo "[dev-all] 警告：未检测到 docker，跳过 Gotenberg 启动，doc-service 的转 PDF 功能将不可用。"
 else
-  GOTENBERG_PORT=3000
+  GOTENBERG_PORT=3010
   DOC_ENV_FILE="$ROOT_DIR/services/doc-service/.env"
   if [ -f "$DOC_ENV_FILE" ]; then
     ENV_URL=$(grep -E '^GOTENBERG_URL=' "$DOC_ENV_FILE" | tail -1 | cut -d= -f2)
@@ -70,7 +70,7 @@ PIDS+=($!)
 ensure_venv "$ROOT_DIR/services/doc-service"
 if [ ! -f "$ROOT_DIR/services/doc-service/.env" ]; then
   cp "$ROOT_DIR/services/doc-service/.env.example" "$ROOT_DIR/services/doc-service/.env"
-  echo "[dev-all] 已生成 services/doc-service/.env（默认 GOTENBERG_URL=http://localhost:3000），如端口不同请自行修改。"
+  echo "[dev-all] 已生成 services/doc-service/.env（默认 GOTENBERG_URL=http://localhost:3010），如端口不同请自行修改。"
 fi
 (
   cd "$ROOT_DIR/services/doc-service"

@@ -12,10 +12,10 @@ Gotenberg（基于 LibreOffice 的文档转换 HTTP 微服务）转换为 PDF �
 本地启动 Gotenberg（Docker）：
 
 ```bash
-docker run -d --name gotenberg --restart unless-stopped -p 3000:3000 gotenberg/gotenberg:8
+docker run -d --name gotenberg --restart unless-stopped -p 3010:3000 gotenberg/gotenberg:8
 ```
 
-通过环境变量 `GOTENBERG_URL` 指定地址，默认值为 `http://localhost:3000`；如本机 3000
+通过环境变量 `GOTENBERG_URL` 指定地址，默认值为 `http://localhost:3010`；如本机 3010
 端口已被占用，可将容器映射到其他端口后通过该环境变量指定，例如
 `GOTENBERG_URL=http://localhost:3300`。
 

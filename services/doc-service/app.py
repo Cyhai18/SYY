@@ -76,7 +76,7 @@ class GenerateRequest(BaseModel):
     data: CertificateData
 
 
-GOTENBERG_URL = os.environ.get("GOTENBERG_URL", "http://localhost:3000")
+GOTENBERG_URL = os.environ.get("GOTENBERG_URL", "http://localhost:3010")
 DOCX_MIME = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
