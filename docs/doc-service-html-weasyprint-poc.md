@@ -322,21 +322,21 @@ HTTP 接口（上传 docx，返回 pdf）。
 
    ```bash
    docker run -d --name gotenberg --restart unless-stopped \
-     -p 3000:3000 gotenberg/gotenberg:8
+     -p 3010:3000 gotenberg/gotenberg:8
    ```
 
-   启动后 `http://localhost:3000` 即为转换服务，内部已包含 LibreOffice、
+   启动后 `http://localhost:3010` 即为转换服务，内部已包含 LibreOffice、
    常驻监听、并发处理，本机不再需要单独安装/配置 `soffice`。
 
 2. **`doc-service` 环境变量**：新增 `GOTENBERG_URL`（默认
-   `http://localhost:3000`），本地开发时指向上面起的容器。
+   `http://localhost:3010`），本地开发时指向上面起的容器。
 
 3. **联调验证**：`curl` 测试转换接口是否可用：
 
    ```bash
    curl -sf -o /tmp/test.pdf \
      -F "files=@services/doc-service/templates/EU_CONSULTEN_SRLS.docx" \
-     http://localhost:3000/forms/libreoffice/convert
+     http://localhost:3010/forms/libreoffice/convert
    ```
 
 ### 云主机部署接入
@@ -382,7 +382,7 @@ services:
   ```python
   import httpx
 
-  GOTENBERG_URL = os.environ.get("GOTENBERG_URL", "http://localhost:3000")
+  GOTENBERG_URL = os.environ.get("GOTENBERG_URL", "http://localhost:3010")
 
   async def _convert_to_pdf(docx_path: Path) -> bytes:
       async with httpx.AsyncClient(timeout=30) as client:

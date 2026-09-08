@@ -280,13 +280,11 @@ flowchart TD
 
 **升级路径建议**：真正要接结构化产线时，需要先在本地装好对应依赖、准备一批真实样图跑通字段抽取结果，确认字段名和准确率符合预期后，再替换 `app.py`/`parsers.py` 里的识别调用逻辑，Nest 侧接口结构无需改动。
 
-#### 3.1.2 为什么识别完直接丢弃图片，不落盘、不建 Attachment 记录
+#### 3.1.2 图片识别后是否落盘留档（决策已更新，见 `client-batch-import-design.md` 第 5 节）
 
-产品决策：营业执照/身份证图片**只用于 OCR 识别本身**，识别完成后不需要留档，因此：
+**原决策（已废弃）**：营业执照/身份证图片只用于 OCR 识别本身，识别完成后不落盘、不建 `Attachment` 记录。
 
-- `OcrController` 收到的 multipart 文件全程走内存 `buffer`（`multer` 默认 `MemoryStorage`），不写入 `UPLOAD_DIR`；`OcrService` 把 `buffer` 直接转发给 `RapidOcrProvider` 做 HTTP 转发，请求结束后 `buffer` 随 GC 回收。
-- `OcrResult` 返回结构不再包含 `fileUrl`，前端 Step 组件也不再调用 `setAttachment` 记录这两类图片，提交 `ClientPayload` 时自然不会为营业执照/身份证生成 `Attachment` 记录。
-- **`Attachment` 表结构保留**，供未来服务端生成文件使用；`ClientPayloadDto` 未定义 `attachments` 字段，`client-wizard-store` 也没有 `attachments`/`setAttachment`。
+**现决策**：客户信息需要保留这些证件图片的可访问 URL（无论走单条录入向导还是批量导入），因此改为——**识别阶段仍不落盘**（`OcrController` 收到的 multipart 文件依旧全程走内存 `buffer`，`OcrService` 直接转发给 `RapidOcrProvider`，避免用户中途放弃向导、或批量导入某个文件后续校验失败时产生孤儿文件），**只在客户被正式创建时才落盘并写入 `Attachment` 记录**，落盘逻辑统一收口在 `ClientsService.createClient()` 内部，单条录入向导与批量导入共用同一段代码，不各写一份。完整方案（存储服务抽象、`createClient()` 新增的 `attachments` 参数、鉴权下载接口设计）见 `docs/client-batch-import-design.md` 第 5 节，本节不再重复。
 
 ### 3.2 服务接口
 
@@ -362,9 +360,9 @@ apps/api/src/clients/
 
 ## 5. 附件
 
-- 当前项目**不提供任何文件上传接口**。
-- `Attachment` 数据表（`schema.prisma`）结构保留，供**未来服务端生成文件**（非用户上传）的场景使用；具体生成/写入逻辑暂不实现。
-- 若后续确有用户上传附件的需求，需另行设计并实现存储服务（本地磁盘或对象存储）。
+- **已设计**（见 `docs/client-batch-import-design.md` 第 5 节）：客户正式创建时，营业执照/身份证图片落盘并写入 `Attachment` 记录，单条录入向导与批量导入共用同一套存储逻辑；OCR 识别阶段仍不落盘（见 3.1.2 节）。
+- 对外访问走鉴权下载接口，不直接把存储目录暴露成静态资源，避免证件图片被越权直连访问。
+- 存储服务做成可替换 Provider（沿用 `SmsService`/`OcrProvider` 的套路），初期落本地磁盘，后续若要接对象存储（OSS/S3）只需新增 Provider 实现，业务代码不用改。
 
 ---
 
