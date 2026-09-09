@@ -105,7 +105,11 @@ export function ClientWizardPage() {
 
     setSubmitting(true);
     try {
-      await clientsApi.create(payload);
+      await clientsApi.create(payload, {
+        businessLicenseFile: state.businessLicenseFile,
+        idCardFrontFile: state.idCardFrontFile,
+        idCardBackFile: state.idCardBackFile,
+      });
       void message.success('客户创建成功');
       reset();
       navigate('/clients');

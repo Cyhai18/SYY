@@ -9,6 +9,7 @@ import { ocrApi } from '../../../lib/ocr-api';
 export function StepCompany() {
   const companyInfo = useClientWizardStore((s) => s.companyInfo);
   const setCompanyInfo = useClientWizardStore((s) => s.setCompanyInfo);
+  const setBusinessLicenseFile = useClientWizardStore((s) => s.setBusinessLicenseFile);
   const markOcrFailed = useClientWizardStore((s) => s.markOcrFailed);
   const ocrFailedHint = useClientWizardStore((s) => s.ocrFailedHint);
   const [recognizing, setRecognizing] = useState(false);
@@ -26,6 +27,7 @@ export function StepCompany() {
 
   const handleUpload = async (file: File) => {
     setFileName(file.name);
+    setBusinessLicenseFile(file);
     setRecognizing(true);
     try {
       const result = await ocrApi.recognizeBusinessLicense(file);

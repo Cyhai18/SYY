@@ -9,6 +9,7 @@ import { ocrApi } from '../../../lib/ocr-api';
 export function StepLegalRep() {
   const legalRepInfo = useClientWizardStore((s) => s.legalRepInfo);
   const setLegalRepInfo = useClientWizardStore((s) => s.setLegalRepInfo);
+  const setIdCardFile = useClientWizardStore((s) => s.setIdCardFile);
   const phone = useClientWizardStore((s) => s.phone);
   const email = useClientWizardStore((s) => s.email);
   const setContact = useClientWizardStore((s) => s.setContact);
@@ -27,6 +28,7 @@ export function StepLegalRep() {
   });
 
   const handleUpload = async (file: File, side: 'front' | 'back') => {
+    setIdCardFile(side, file);
     setRecognizing(side);
     try {
       const result = await ocrApi.recognizeIdCard(file, side);

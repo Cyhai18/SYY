@@ -86,6 +86,48 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return (await response.json()) as T;
 }
 
+/** 提交 multipart/form-data（客户创建携带证件图片），不手动设置 Content-Type，交给浏览器带上 boundary。 */
+async function requestMultipart<T>(
+  path: string,
+  formData: FormData,
+  method: 'POST' | 'PATCH' = 'POST',
+): Promise<T> {
+  const accessToken = useAuthStore.getState().accessToken;
+
+  const doFetch = (token: string | null) =>
+    fetch(`${API_BASE}${path}`, {
+      method,
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+    });
+
+  let response = await doFetch(accessToken);
+
+  if (response.status === 401) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      useAuthStore.getState().setAccessToken(newToken);
+      response = await doFetch(newToken);
+    } else {
+      useAuthStore.getState().clear();
+    }
+  }
+
+  const requestId = response.headers.get('X-Request-Id') ?? undefined;
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      useAuthStore.getState().clear();
+    }
+    const payload = await response.json().catch(() => ({ message: '请求失败' }));
+    const message = Array.isArray(payload?.message) ? payload.message.join('；') : payload?.message;
+    throw new ApiError(response.status, message ?? '请求失败', requestId);
+  }
+
+  return (await response.json()) as T;
+}
+
 /** 下载二进制响应（如证书 PDF），复用 access token 与 401 自动刷新逻辑，但不按 JSON 解析响应体。 */
 async function requestBinary(
   path: string,
@@ -135,6 +177,10 @@ export const apiClient = {
     request<T>(path, { method: 'POST', body, ...opts }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
   postBinary: (path: string, body?: unknown) => requestBinary(path, { method: 'POST', body }),
+  postMultipart: <T>(path: string, formData: FormData) =>
+    requestMultipart<T>(path, formData, 'POST'),
+  patchMultipart: <T>(path: string, formData: FormData) =>
+    requestMultipart<T>(path, formData, 'PATCH'),
 };
 
 export type { AuthResult };

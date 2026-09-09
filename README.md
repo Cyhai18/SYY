@@ -14,6 +14,7 @@
 - Node.js >= 20.19.0
 - pnpm 10.33.0（见根 `package.json` `packageManager`）
 - 本地或远程可访问的 MySQL 服务
+- 本地或远程可访问的 Redis 服务（批量导入客户功能的 BullMQ 队列依赖，见下方「本地依赖」一节）
 
 ## 新环境启动步骤
 
@@ -54,6 +55,20 @@
 
 - Web：http://localhost:5173
 - API：http://localhost:3000/api/health
+
+## 本地依赖
+
+### Redis（批量导入客户功能用，BullMQ 队列）
+
+授权客户批量导入（见 `docs/client-batch-import-design.md`）用 BullMQ + Redis 做异步任务队列，本地开发需要一个可用的 Redis 实例：
+
+```bash
+brew install redis        # 首次安装（macOS，已安装可跳过）
+brew services start redis # 后台常驻启动，默认监听 127.0.0.1:6379
+# 或用 Docker：docker run -d --name funtax-redis -p 6379:6379 redis
+```
+
+`apps/api/.env` 中的 `REDIS_URL` 默认回退到 `redis://127.0.0.1:6379`，与上述默认端口一致，本地开发通常无需额外配置。生产环境务必显式配置指向真实 Redis 服务（建议独立实例，不与其他项目共用，避免队列任务互相干扰）。
 
 ## 常见问题
 

@@ -12,6 +12,7 @@ import {
   Table,
   Tag,
   Tooltip,
+  Upload,
   message,
 } from 'antd';
 import type { TablePaginationConfig } from 'antd/es/table';
@@ -19,8 +20,10 @@ import {
   EyeOutlined,
   FilePdfOutlined,
   FileProtectOutlined,
+  InboxOutlined,
   PlusOutlined,
   SearchOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -34,6 +37,7 @@ import {
   type ClientType,
 } from '@funtax/shared';
 import { clientsApi, type ListClientsParams } from '../../lib/clients-api';
+import { clientImportApi } from '../../lib/client-import-api';
 import { brandColors } from '../../theme';
 import { ClientDetailDrawer } from './ClientDetailDrawer';
 
@@ -76,6 +80,9 @@ export function ClientListPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
   // 已提交的筛选条件：仅在点击"查询"按钮（表单 onFinish）时更新，翻页/切页大小时复用
   const [filters, setFilters] = useState<Omit<ListClientsParams, 'page' | 'pageSize'>>({});
 
@@ -230,12 +237,67 @@ export function ClientListPage() {
               </Button>
             </Space>
 
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/clients/new')}>
-              新增客户
-            </Button>
+            <Space>
+              <Button icon={<UploadOutlined />} onClick={() => setImportModalOpen(true)}>
+                批量导入
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => navigate('/clients/new')}
+              >
+                新增客户
+              </Button>
+            </Space>
           </div>
         </Form>
       </Card>
+
+      <Modal
+        title="批量导入客户"
+        open={importModalOpen}
+        onCancel={() => {
+          setImportModalOpen(false);
+          setImportFile(null);
+        }}
+        onOk={async () => {
+          if (!importFile) {
+            void message.warning('请先选择要上传的 ZIP 文件');
+            return;
+          }
+          setImporting(true);
+          try {
+            const job = await clientImportApi.create(importFile);
+            setImportModalOpen(false);
+            setImportFile(null);
+            navigate(`/clients/import/${job.id}`);
+          } catch {
+            void message.error('上传失败，请重试');
+          } finally {
+            setImporting(false);
+          }
+        }}
+        okText="开始导入"
+        okButtonProps={{ loading: importing, disabled: !importFile }}
+        destroyOnClose
+      >
+        <Upload.Dragger
+          accept=".zip"
+          maxCount={1}
+          showUploadList
+          beforeUpload={(file) => {
+            setImportFile(file);
+            return false;
+          }}
+          onRemove={() => setImportFile(null)}
+        >
+          <p className="ant-upload-drag-icon">
+            <InboxOutlined />
+          </p>
+          <p className="ant-upload-text">点击或拖拽 ZIP 文件到此区域上传</p>
+          <p className="ant-upload-hint">ZIP 内应包含多个按官方模板填写的授权客户信息 Excel 文件</p>
+        </Upload.Dragger>
+      </Modal>
 
       <Card bordered={false} className="clients-table-card">
         <Table<ClientListItem>

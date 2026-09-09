@@ -33,6 +33,7 @@ model User {
   createdClients Client[] @relation("ClientCreatedBy")
   updatedClients Client[] @relation("ClientUpdatedBy")
   certificates   Certificate[]
+  importJobs     ClientImportJob[]
 }
 
 model ActionLog {
@@ -278,4 +279,60 @@ model Certificate {
 model CertificateDailyCounter {
   day String @id // "2026-09-03"
   seq Int    @default(0)
+}
+
+// ---------------------------------------------------------------------------
+// 授权客户 - 表格模板批量导入（见 docs/client-batch-import-design.md）
+// ---------------------------------------------------------------------------
+
+enum ImportJobStatus {
+  QUEUED
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum ImportItemStatus {
+  PENDING
+  OCR_PROCESSING
+  SUCCESS
+  NEEDS_REVIEW
+  FAILED
+}
+
+// 一次 ZIP 上传 = 一个批次
+model ClientImportJob {
+  id           String          @id @default(uuid())
+  status       ImportJobStatus @default(QUEUED)
+  fileName     String // 原始 ZIP 文件名，便于用户核对
+  totalCount   Int             @default(0) // ZIP 内识别到的有效 .xlsx 数量
+  successCount Int             @default(0)
+  reviewCount  Int             @default(0)
+  failedCount  Int             @default(0)
+  createdById  String
+  createdBy    User            @relation(fields: [createdById], references: [id])
+  items        ClientImportItem[]
+  createdAt    DateTime        @default(now())
+  finishedAt   DateTime?
+
+  @@index([createdById])
+  @@index([status])
+}
+
+// 批次内每个 .xlsx 文件的处理状态
+model ClientImportItem {
+  id           String           @id @default(uuid())
+  jobId        String
+  job          ClientImportJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  fileName     String // ZIP 内的原始文件名，如"张三.xlsx"
+  status       ImportItemStatus @default(PENDING)
+  clientId     String? // 成功创建后回填，便于跳转详情
+  errorReason  String?          @db.Text // FAILED 原因（如"OCR服务不可用""必填字段缺失"）
+  reviewFields Json? // NEEDS_REVIEW 时，已识别/已填字段快照，供前端核对表单直接回填
+  reviewIssues Json? // NEEDS_REVIEW 具体问题清单，如 [{field:"idNumber", message:"身份证校验位不通过"}]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([jobId])
+  @@index([status])
 }

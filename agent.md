@@ -6,15 +6,15 @@
 
 ## 架构决策
 
-| 项     | 选择                                                    | 原因                                                          |
-| ------ | ------------------------------------------------------- | ------------------------------------------------------------- |
-| 后端   | NestJS 11 + TypeScript                                  | 与前端同语言，模块边界清晰，后续 BullMQ / Prisma 接入成本低   |
-| 前端   | React 19 + Vite + Ant Design 6                          | 税务后台用 Ant Design 组件，禁止自绘 Button/Input/Table       |
-| CSS    | 原生 CSS + hex token（antd 不支持 oklch seed token）    | MVP 不用 Tailwind                                             |
-| 数据库 | MySQL + Prisma 7（已建表：User/ActionLog/RefreshToken） | JSON 适配多国申报字段；Prisma 类型安全 + 迁移体验优于 TypeORM |
-| 队列   | Redis + BullMQ（未接入）                                | 第三方申报异步任务                                            |
-| 仓库   | pnpm + Turborepo                                        | `apps/web`、`apps/api`、`packages/shared`                     |
-| 鉴权   | JWT access（内存）+ Refresh Token（HttpOnly Cookie）    | 手机号验证码/密码双模式登录；预留角色扩展（`Role` 枚举）      |
+| 项     | 选择                                                    | 原因                                                                      |
+| ------ | ------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 后端   | NestJS 11 + TypeScript                                  | 与前端同语言，模块边界清晰，后续 BullMQ / Prisma 接入成本低               |
+| 前端   | React 19 + Vite + Ant Design 6                          | 税务后台用 Ant Design 组件，禁止自绘 Button/Input/Table                   |
+| CSS    | 原生 CSS + hex token（antd 不支持 oklch seed token）    | MVP 不用 Tailwind                                                         |
+| 数据库 | MySQL + Prisma 7（已建表：User/ActionLog/RefreshToken） | JSON 适配多国申报字段；Prisma 类型安全 + 迁移体验优于 TypeORM             |
+| 队列   | Redis + BullMQ（已接入，见 `apps/api/src/queue/`）      | 批量导入客户异步任务（首个场景，见 `docs/client-batch-import-design.md`） |
+| 仓库   | pnpm + Turborepo                                        | `apps/web`、`apps/api`、`packages/shared`                                 |
+| 鉴权   | JWT access（内存）+ Refresh Token（HttpOnly Cookie）    | 手机号验证码/密码双模式登录；预留角色扩展（`Role` 枚举）                  |
 
 工作区：
 

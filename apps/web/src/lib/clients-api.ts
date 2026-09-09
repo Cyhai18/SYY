@@ -45,7 +45,28 @@ export const clientsApi = {
   list: (params: ListClientsParams = {}) =>
     apiClient.get<ListClientsResult>(`/clients${buildQuery(params)}`),
 
-  create: (payload: ClientPayload) => apiClient.post<ClientDetail>('/clients', payload),
+  /** 提交改为 multipart：文字字段 JSON 序列化后放入 `payload` 字段，证件图片随行携带，见 client-batch-import-design.md 第 5.2 节。 */
+  create: (
+    payload: ClientPayload,
+    files?: {
+      businessLicenseFile?: File | null;
+      idCardFrontFile?: File | null;
+      idCardBackFile?: File | null;
+    },
+  ) => {
+    const formData = new FormData();
+    formData.append('payload', JSON.stringify(payload));
+    if (files?.businessLicenseFile) {
+      formData.append('businessLicenseFile', files.businessLicenseFile);
+    }
+    if (files?.idCardFrontFile) {
+      formData.append('idCardFrontFile', files.idCardFrontFile);
+    }
+    if (files?.idCardBackFile) {
+      formData.append('idCardBackFile', files.idCardBackFile);
+    }
+    return apiClient.postMultipart<ClientDetail>('/clients', formData);
+  },
 
   get: (id: string) => apiClient.get<ClientDetail>(`/clients/${id}`),
 

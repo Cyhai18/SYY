@@ -1,31 +1,71 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Role } from '@prisma/client';
+import {
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { AttachmentType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActionLogService } from '../common/action-log/action-log.service';
+import { FILE_STORAGE, type FileStorageService } from '../storage/file-storage.service';
 import type { RequestMeta } from '../auth/auth.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import type { ClientPayloadDto } from './dto/client-payload.dto';
 import type { UpdateClientDto } from './dto/update-client.dto';
 import type { ListClientsDto } from './dto/list-clients.dto';
 
+export interface ClientAttachmentInput {
+  type: AttachmentType;
+  buffer: Buffer;
+  mimetype: string;
+  originalName: string;
+}
+
 /**
- * 客户画像落库入口。`createClient` 是单条录入向导与未来批量导入**共用**的唯一入口，
- * 字段校验之外的业务逻辑（expiresAt 计算、ActionLog 审计）只在这里写一份。
+ * 客户画像落库入口。`createClient` 是单条录入向导与批量导入**共用**的唯一入口，
+ * 字段校验之外的业务逻辑（expiresAt 计算、附件落盘、ActionLog 审计）只在这里写一份。
  */
 @Injectable()
 export class ClientsService {
+  private readonly logger = new Logger(ClientsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly actionLogService: ActionLogService,
+    @Inject(FILE_STORAGE) private readonly fileStorage: FileStorageService,
   ) {}
 
-  /** @param actor 创建者；ctx.ownerId 缺省时默认归属创建者本人 */
+  /**
+   * 按注册类型选取去重键查重：公司类型用统一信用代码，个人类型用身份证号，
+   * 两者都落在 `CompanyInfo.creditCode`（见 schema.prisma 注释）。
+   * 见 docs/client-batch-import-design.md 第 8 节。
+   */
+  async findDuplicate(creditCode: string) {
+    return this.prisma.client.findFirst({
+      where: { deletedAt: null, companyInfo: { creditCode } },
+      include: { companyInfo: true, legalRepInfo: true },
+    });
+  }
+
+  /**
+   * @param actor 创建者；ownerId 缺省时默认归属创建者本人
+   * @param attachments 营业执照/身份证图片，事务提交后落盘，落盘失败只记 warning，不回滚客户创建
+   */
   async createClient(
     payload: ClientPayloadDto,
     actor: AuthenticatedUser,
     meta: RequestMeta,
     ownerId?: string,
+    attachments?: ClientAttachmentInput[],
   ) {
+    const duplicate = await this.findDuplicate(payload.companyInfo.creditCode);
+    if (duplicate) {
+      throw new ConflictException(
+        `该客户已存在（${duplicate.companyInfo?.nameCn ?? duplicate.companyInfo?.nameEn ?? duplicate.phone}），请勿重复创建`,
+      );
+    }
     const client = await this.prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
         data: {
@@ -89,7 +129,34 @@ export class ClientsService {
       userAgent: meta.userAgent,
     });
 
+    // 附件落盘发生在事务提交之后：先保证客户核心数据落库，图片写盘失败只记 warning，不回滚客户创建
+    // （见 docs/client-batch-import-design.md 第 5.2 节）。单条录入向导与批量导入共用这一段逻辑。
+    if (attachments?.length) {
+      await this.saveAttachments(client.id, attachments);
+    }
+
     return this.findOne(client.id, actor);
+  }
+
+  private async saveAttachments(clientId: string, attachments: ClientAttachmentInput[]) {
+    for (const attachment of attachments) {
+      try {
+        const { fileUrl } = await this.fileStorage.save({
+          clientId,
+          type: attachment.type,
+          buffer: attachment.buffer,
+          mimetype: attachment.mimetype,
+          originalName: attachment.originalName,
+        });
+        await this.prisma.attachment.create({
+          data: { clientId, type: attachment.type, fileUrl },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `附件落盘失败，不影响客户创建：clientId=${clientId} type=${attachment.type} err=${String(err)}`,
+        );
+      }
+    }
   }
 
   async findAll(query: ListClientsDto, actor: AuthenticatedUser) {

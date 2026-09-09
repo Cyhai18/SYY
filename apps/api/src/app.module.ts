@@ -16,6 +16,7 @@ import { UsersModule } from './users/users.module';
 import { ClientsModule } from './clients/clients.module';
 import { OcrModule } from './ocr/ocr.module';
 import { CertificateModule } from './certificate/certificate.module';
+import { QueueModule } from './queue/queue.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CertificateModule } from './certificate/certificate.module';
     ActionLogModule,
     PrismaModule,
     PassportModule,
+    QueueModule,
     SmsModule,
     AuthModule,
     UsersModule,

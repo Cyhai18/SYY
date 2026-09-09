@@ -18,6 +18,7 @@ import { RegisterPage } from './pages/RegisterPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ClientListPage } from './pages/clients/ClientListPage';
 import { ClientWizardPage } from './pages/clients/ClientWizardPage';
+import { ClientImportProgressPage } from './pages/clients/import/ClientImportProgressPage';
 import { useAuthStore } from './store/auth-store';
 import { bootstrapAuth } from './lib/auth-api';
 
@@ -57,6 +58,17 @@ export function App() {
             <RequireAuth>
               <AppShell>
                 <ClientWizardPage />
+              </AppShell>
+            </RequireAuth>
+          }
+        />
+
+        <Route
+          path="/clients/import/:jobId"
+          element={
+            <RequireAuth>
+              <AppShell>
+                <ClientImportProgressPage />
               </AppShell>
             </RequireAuth>
           }

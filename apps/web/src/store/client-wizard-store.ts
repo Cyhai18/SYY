@@ -35,6 +35,10 @@ interface ClientWizardState {
   agentInfos: AgentInfoDraft[];
   /** OCR 识别是否失败过，用于在表单顶部展示统一提醒语。 */
   ocrFailedHint: boolean;
+  /** 向导内上传的原始图片，识别完不落盘，提交时随 multipart 一并交给后端持久化，见 client-batch-import-design.md 第 5.2 节。 */
+  businessLicenseFile: File | null;
+  idCardFrontFile: File | null;
+  idCardBackFile: File | null;
 
   setCurrent: (step: number) => void;
   setClientType: (type: ClientType) => void;
@@ -43,6 +47,8 @@ interface ClientWizardState {
   setLegalRepInfo: (fields: Partial<LegalRepresentativePayload>) => void;
   setAgentInfos: (agentInfos: AgentInfoDraft[]) => void;
   markOcrFailed: () => void;
+  setBusinessLicenseFile: (file: File) => void;
+  setIdCardFile: (side: 'front' | 'back', file: File) => void;
   reset: () => void;
 }
 
@@ -56,6 +62,9 @@ const initialState = {
   legalRepInfo: {} as Partial<LegalRepresentativePayload>,
   agentInfos: [] as AgentInfoDraft[],
   ocrFailedHint: false,
+  businessLicenseFile: null as File | null,
+  idCardFrontFile: null as File | null,
+  idCardBackFile: null as File | null,
 };
 
 /** 新建客户向导的全局草稿态；4 个 Step 组件共享同一份 store，最终一次性提交给 `/api/clients`。 */
@@ -68,5 +77,8 @@ export const useClientWizardStore = create<ClientWizardState>((set) => ({
   setLegalRepInfo: (fields) => set((s) => ({ legalRepInfo: { ...s.legalRepInfo, ...fields } })),
   setAgentInfos: (agentInfos) => set({ agentInfos }),
   markOcrFailed: () => set({ ocrFailedHint: true }),
+  setBusinessLicenseFile: (file) => set({ businessLicenseFile: file }),
+  setIdCardFile: (side, file) =>
+    set(side === 'front' ? { idCardFrontFile: file } : { idCardBackFile: file }),
   reset: () => set({ ...initialState }),
 }));
