@@ -3,6 +3,7 @@ import type {
   AgentInfoPayload,
   ClientType,
   CompanyInfoPayload,
+  DuplicateCheckAgentInfo,
   LegalRepresentativePayload,
   ProductPayload,
   ShopPayload,
@@ -24,8 +25,21 @@ export interface AgentInfoDraft extends AgentInfoPayload {
   shops: ShopDraft[];
 }
 
+/** 向导模式：CREATE 从零建档；APPEND 命中已存在客户后，仅追加代理信息，主体标识字段锁定。 */
+export type WizardMode = 'CREATE' | 'APPEND';
+
 interface ClientWizardState {
   current: number;
+  mode: WizardMode;
+  /** APPEND 模式下命中的已存在客户 id；CREATE 模式为 null。 */
+  existingClientId: string | null;
+  /** APPEND 模式下该客户已有的 (country, agentCompany) 组合，供代理信息步骤禁用重复选项。 */
+  existingAgentCombos: Set<string>;
+  /**
+   * APPEND 模式下该客户已有的代理信息摘要（查重接口出于隐私考虑只返回最小字段，见
+   * `ClientsService.checkDuplicate`），仅用于代理信息步骤展示提示，不是完整数据，不可编辑。
+   */
+  existingAgentInfos: DuplicateCheckAgentInfo[];
   clientType: ClientType | null;
   phone: string;
   email?: string;
@@ -49,11 +63,24 @@ interface ClientWizardState {
   markOcrFailed: () => void;
   setBusinessLicenseFile: (file: File) => void;
   setIdCardFile: (side: 'front' | 'back', file: File) => void;
+  /**
+   * 命中已存在客户时调用：切换到 APPEND 模式，仅记录已存在客户的 id 及其现有代理信息
+   * （用于只读展示 + 禁用重复的 country/agentCompany 组合）。
+   *
+   * 注意：不会覆盖当前表单里已经填写/识别的 companyInfo/legalRepInfo/phone/email —— 因为
+   * 统一信用代码/身份证号永远不变，但营业执照/身份证及其余信息可能有更新，本次识别到的最新内容
+   * 才是要保存的值，旧记录仅供参照展示，不应回填覆盖当前表单。
+   */
+  hydrateFromExisting: (client: { id: string; agentInfos: DuplicateCheckAgentInfo[] }) => void;
   reset: () => void;
 }
 
 const initialState = {
   current: 0,
+  mode: 'CREATE' as WizardMode,
+  existingClientId: null as string | null,
+  existingAgentCombos: new Set<string>(),
+  existingAgentInfos: [] as DuplicateCheckAgentInfo[],
   clientType: null as ClientType | null,
   phone: '',
   email: undefined as string | undefined,
@@ -67,7 +94,7 @@ const initialState = {
   idCardBackFile: null as File | null,
 };
 
-/** 新建客户向导的全局草稿态；4 个 Step 组件共享同一份 store，最终一次性提交给 `/api/clients`。 */
+/** 新建客户向导的全局草稿态；4 个 Step 组件共享同一份 store，最终一次性提交给 `/api/clients`（或追加接口）。 */
 export const useClientWizardStore = create<ClientWizardState>((set) => ({
   ...initialState,
   setCurrent: (step) => set({ current: step }),
@@ -80,5 +107,14 @@ export const useClientWizardStore = create<ClientWizardState>((set) => ({
   setBusinessLicenseFile: (file) => set({ businessLicenseFile: file }),
   setIdCardFile: (side, file) =>
     set(side === 'front' ? { idCardFrontFile: file } : { idCardBackFile: file }),
-  reset: () => set({ ...initialState }),
+  hydrateFromExisting: (client) =>
+    set({
+      mode: 'APPEND',
+      existingClientId: client.id,
+      existingAgentCombos: new Set(client.agentInfos.map((a) => `${a.country}:${a.agentCompany}`)),
+      existingAgentInfos: client.agentInfos,
+      // 对应 ClientWizardPage 的 WIZARD_STEP.AGENT_INFO：主体/法人信息已回填，直接跳到代理信息步骤
+      current: 3,
+    }),
+  reset: () => set({ ...initialState, existingAgentCombos: new Set(), existingAgentInfos: [] }),
 }));

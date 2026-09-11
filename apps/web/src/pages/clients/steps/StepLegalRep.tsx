@@ -4,6 +4,7 @@ import { IdcardOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { useClientWizardStore } from '../../../store/client-wizard-store';
 import { ocrApi } from '../../../lib/ocr-api';
+import { useDuplicateCheck } from '../hooks/useDuplicateCheck';
 
 /** Step2：法人（或个人客户本人）信息，通过身份证正反面上传识别姓名/身份证号/地址。 */
 export function StepLegalRep() {
@@ -16,6 +17,7 @@ export function StepLegalRep() {
   const markOcrFailed = useClientWizardStore((s) => s.markOcrFailed);
   const ocrFailedHint = useClientWizardStore((s) => s.ocrFailedHint);
   const [recognizing, setRecognizing] = useState<'front' | 'back' | null>(null);
+  const { scheduleDuplicateCheck, isLocked } = useDuplicateCheck('身份证号');
 
   const makeUploadProps = (side: 'front' | 'back'): UploadProps => ({
     accept: '.jpg,.jpeg,.png',
@@ -34,6 +36,7 @@ export function StepLegalRep() {
       const result = await ocrApi.recognizeIdCard(file, side);
       if (result.recognized) {
         setLegalRepInfo(result.fields);
+        if (result.fields.idNumber) scheduleDuplicateCheck(result.fields.idNumber);
         void message.success(`身份证${side === 'front' ? '正面' : '反面'}识别完成，已自动填充`);
       } else {
         markOcrFailed();
@@ -54,6 +57,15 @@ export function StepLegalRep() {
           type="warning"
           showIcon
           message="部分证件未能自动识别，请手动核对并补全下方信息"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
+
+      {isLocked ? (
+        <Alert
+          type="info"
+          showIcon
+          message="该客户已存在，正在为其追加代理信息。身份证号不可变更，其余信息及本次上传的身份证图片将以最新识别/填写内容为准并覆盖更新。"
           style={{ marginBottom: 16 }}
         />
       ) : null}
@@ -104,7 +116,9 @@ export function StepLegalRep() {
               <Form.Item label="身份证号" required>
                 <Input
                   value={legalRepInfo.idNumber}
+                  disabled={isLocked}
                   onChange={(e) => setLegalRepInfo({ idNumber: e.target.value })}
+                  onBlur={(e) => scheduleDuplicateCheck(e.target.value)}
                 />
               </Form.Item>
             </Col>
@@ -147,7 +161,7 @@ export function StepLegalRep() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="邮箱">
+              <Form.Item label="邮箱" required>
                 <Input value={email} onChange={(e) => setContact({ email: e.target.value })} />
               </Form.Item>
             </Col>

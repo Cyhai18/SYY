@@ -14,9 +14,16 @@ const AGENT_COUNTRY_OPTIONS = Object.entries(AGENT_COUNTRY_LABELS).map(([value, 
   value,
   label,
 }));
-/** 按代理国家过滤代理公司下拉选项。 */
-const agentCompanyOptions = (country: AgentCountry) =>
-  AGENT_COUNTRY_COMPANIES[country].map((value) => ({ value, label: AGENT_COMPANY_LABELS[value] }));
+/**
+ * 按代理国家过滤代理公司下拉选项；`usedCombos` 命中的组合（客户已存在的、或本次提交内其他条目
+ * 已选的 country+agentCompany）会被禁用，防止重复添加同一代理国家+代理公司。
+ */
+const agentCompanyOptions = (country: AgentCountry, usedCombos: Set<string>) =>
+  AGENT_COUNTRY_COMPANIES[country].map((value) => ({
+    value,
+    label: AGENT_COMPANY_LABELS[value],
+    disabled: usedCombos.has(`${country}:${value}`),
+  }));
 
 function createEmptyShop(): ShopDraft {
   return {
@@ -34,11 +41,18 @@ function createEmptyShop(): ShopDraft {
 export function AgentInfoEditor({
   agentInfo,
   onChange,
+  usedCombos = new Set(),
+  disabled = false,
 }: {
   agentInfo: AgentInfoDraft;
   onChange: (next: AgentInfoDraft) => void;
+  /** 已被占用（客户已有 + 本次提交内其他条目已选）的 country+agentCompany 组合，用于禁用重复选项。 */
+  usedCombos?: Set<string>;
+  /** 只读展示已存在的代理信息（APPEND 模式下），此时隐藏新增/删除操作，所有输入控件禁用。 */
+  disabled?: boolean;
 }) {
   const update = (fields: Partial<AgentInfoDraft>) => onChange({ ...agentInfo, ...fields });
+  const companyOptions = agentCompanyOptions(agentInfo.country, usedCombos);
 
   const addShop = () => update({ shops: [...agentInfo.shops, createEmptyShop()] });
   const removeShop = (key: string) =>
@@ -55,8 +69,13 @@ export function AgentInfoEditor({
               <Select
                 value={agentInfo.country}
                 options={AGENT_COUNTRY_OPTIONS}
+                disabled={disabled}
                 onChange={(val) =>
-                  update({ country: val, agentCompany: agentCompanyOptions(val)[0]?.value })
+                  update({
+                    country: val,
+                    agentCompany: agentCompanyOptions(val, usedCombos).find((o) => !o.disabled)
+                      ?.value,
+                  })
                 }
               />
             </Form.Item>
@@ -66,6 +85,7 @@ export function AgentInfoEditor({
               <Input
                 type="date"
                 value={agentInfo.expectedEffectiveDate}
+                disabled={disabled}
                 onChange={(e) => update({ expectedEffectiveDate: e.target.value })}
               />
             </Form.Item>
@@ -77,6 +97,7 @@ export function AgentInfoEditor({
                 min={1}
                 max={20}
                 value={agentInfo.agentYears}
+                disabled={disabled}
                 onChange={(e) => update({ agentYears: Number(e.target.value) })}
               />
             </Form.Item>
@@ -85,7 +106,8 @@ export function AgentInfoEditor({
             <Form.Item label="代理公司" required>
               <Select<AgentCompany>
                 value={agentInfo.agentCompany}
-                options={agentCompanyOptions(agentInfo.country)}
+                options={companyOptions}
+                disabled={disabled}
                 onChange={(val) => update({ agentCompany: val })}
               />
             </Form.Item>
@@ -101,7 +123,7 @@ export function AgentInfoEditor({
           items={agentInfo.shops.map((shop, index) => ({
             key: shop.key,
             label: shop.shopName || `店铺 ${index + 1}`,
-            extra: (
+            extra: disabled ? null : (
               <Button
                 type="text"
                 danger
@@ -113,14 +135,22 @@ export function AgentInfoEditor({
                 }}
               />
             ),
-            children: <ShopEditor shop={shop} onChange={(next) => updateShop(shop.key, next)} />,
+            children: (
+              <ShopEditor
+                shop={shop}
+                disabled={disabled}
+                onChange={(next) => updateShop(shop.key, next)}
+              />
+            ),
           }))}
           style={{ marginBottom: 16 }}
         />
       )}
-      <Button type="dashed" block icon={<PlusOutlined />} onClick={addShop}>
-        新增店铺
-      </Button>
+      {disabled ? null : (
+        <Button type="dashed" block icon={<PlusOutlined />} onClick={addShop}>
+          新增店铺
+        </Button>
+      )}
     </div>
   );
 }

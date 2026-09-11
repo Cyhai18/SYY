@@ -103,26 +103,31 @@ export function ClientDetailDrawer({ clientId, onClose }: ClientDetailDrawerProp
                   <Descriptions.Item label="英文地址" span={2}>
                     {detail.companyInfo.addressEn ?? '—'}
                   </Descriptions.Item>
+                  <Descriptions.Item label="联系人">
+                    {detail.companyInfo.contactPerson ?? '—'}
+                  </Descriptions.Item>
                 </Descriptions>
               </Card>
             ) : null}
 
-            <Card bordered={false} title="法人信息" style={{ marginTop: 16 }}>
-              <Descriptions column={2} bordered size="small">
-                <Descriptions.Item label="姓名（中文）">
-                  {detail.legalRepInfo.nameCn}
-                </Descriptions.Item>
-                <Descriptions.Item label="姓名（拼音）">
-                  {detail.legalRepInfo.namePinyin}
-                </Descriptions.Item>
-                <Descriptions.Item label="身份证号">
-                  {detail.legalRepInfo.idNumber}
-                </Descriptions.Item>
-                <Descriptions.Item label="身份证地址（中文）" span={2}>
-                  {detail.legalRepInfo.idAddressCn}
-                </Descriptions.Item>
-              </Descriptions>
-            </Card>
+            {detail.clientType === 'INDIVIDUAL' && detail.legalRepInfo ? (
+              <Card bordered={false} title="法人信息" style={{ marginTop: 16 }}>
+                <Descriptions column={2} bordered size="small">
+                  <Descriptions.Item label="姓名（中文）">
+                    {detail.legalRepInfo.nameCn}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="姓名（拼音）">
+                    {detail.legalRepInfo.namePinyin}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="身份证号">
+                    {detail.legalRepInfo.idNumber}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="身份证地址（中文）" span={2}>
+                    {detail.legalRepInfo.idAddressCn}
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            ) : null}
 
             <Card bordered={false} title="代理信息" style={{ marginTop: 16 }}>
               {detail.agentInfos.length === 0 ? (

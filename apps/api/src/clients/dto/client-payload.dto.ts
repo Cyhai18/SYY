@@ -35,6 +35,8 @@ export class CompanyInfoDto {
   @IsOptional() @IsString() @MaxLength(100) cityEn?: string;
   @IsOptional() @IsString() @MaxLength(20) postalCode?: string;
   @IsOptional() @IsString() addressEn?: string;
+  /** 联系人，仅公司类型客户必填；是否必填由 ClientsService 按 clientType 校验 */
+  @IsOptional() @IsString() @MaxLength(100) contactPerson?: string;
 }
 
 export class LegalRepresentativeDto {
@@ -89,16 +91,45 @@ export class ClientPayloadDto {
 
   @Matches(/^1[3-9]\d{9}$/, { message: '手机号格式不正确' }) phone!: string;
 
+  @IsEmail({}, { message: '邮箱格式不正确' }) email!: string;
+
+  @IsOptional() @IsString() remark?: string;
+
+  @ValidateNested() @Type(() => CompanyInfoDto) companyInfo!: CompanyInfoDto;
+
+  /** 公司类型客户不再采集法人信息，仅个人类型客户必填；是否必填由 ClientsService 按 clientType 校验 */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LegalRepresentativeDto)
+  legalRepInfo?: LegalRepresentativeDto;
+
+  @IsArray()
+  @ArrayMinSize(1, { message: '至少需要一条代理信息' })
+  @ValidateNested({ each: true })
+  @Type(() => AgentInfoDto)
+  agentInfos!: AgentInfoDto[];
+}
+
+/**
+ * 已存在客户追加代理信息（见 docs/client-profile-design.md「老客户追加代理信息」一节）。
+ * companyInfo.creditCode / legalRepInfo.idNumber 是客户唯一标识，一旦客户存在即不可变更，
+ * 前端会照旧回传当前值以通过校验，但 `ClientsService.appendAgentInfo()` 落库时会显式剔除这两个字段、
+ * 只更新其余主体/法人信息，避免误改唯一标识导致与已有客户"错位"。
+ */
+export class AppendAgentInfoDto {
   @IsOptional() @IsEmail({}, { message: '邮箱格式不正确' }) email?: string;
 
   @IsOptional() @IsString() remark?: string;
 
   @ValidateNested() @Type(() => CompanyInfoDto) companyInfo!: CompanyInfoDto;
 
-  @ValidateNested() @Type(() => LegalRepresentativeDto) legalRepInfo!: LegalRepresentativeDto;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LegalRepresentativeDto)
+  legalRepInfo?: LegalRepresentativeDto;
 
   @IsArray()
-  @ArrayMinSize(1, { message: '至少需要一条代理信息' })
+  @ArrayMinSize(1, { message: '至少需要新增一条代理信息' })
   @ValidateNested({ each: true })
   @Type(() => AgentInfoDto)
   agentInfos!: AgentInfoDto[];

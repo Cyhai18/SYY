@@ -95,6 +95,8 @@ export interface CompanyInfoPayload {
   cityEn?: string;
   postalCode?: string;
   addressEn?: string;
+  /** 联系人，仅公司类型客户必填（个人客户无此字段） */
+  contactPerson?: string;
 }
 
 export interface LegalRepresentativePayload {
@@ -162,6 +164,26 @@ export interface AgentInfoPayload {
   shops?: ShopPayload[];
 }
 
+/**
+ * `checkDuplicate` 查重接口返回的最小字段集合（见 `ClientsService.checkDuplicate` 的隐私说明），
+ * 仅供向导展示"该客户已有哪些代理信息"的摘要提示，不是完整的 `AgentInfoPayload`/`ShopPayload`，
+ * 不要与两者混用。
+ */
+export interface DuplicateCheckShop {
+  platform: Platform;
+  shopName: string;
+  productCount: number;
+}
+export interface DuplicateCheckAgentInfo {
+  country: AgentCountry;
+  agentCompany: AgentCompany;
+  shops: DuplicateCheckShop[];
+}
+export interface DuplicateCheckResult {
+  id: string;
+  agentInfos: DuplicateCheckAgentInfo[];
+}
+
 /** OCR 识别接口的统一返回结构：`fields` 为结构化字段，`recognized` 标记是否识别成功。营业执照/身份证图片仅用于识别，不落盘、不返回 fileUrl。 */
 export interface OcrResult<T> {
   fields: T;
@@ -192,10 +214,11 @@ export interface IdCardFields {
 export interface ClientPayload {
   clientType: ClientType;
   phone: string;
-  email?: string;
+  email: string;
   remark?: string;
   companyInfo: CompanyInfoPayload;
-  legalRepInfo: LegalRepresentativePayload;
+  /** 公司类型客户不再采集法人信息，仅个人类型客户必填 */
+  legalRepInfo?: LegalRepresentativePayload;
   agentInfos: AgentInfoPayload[];
 }
 

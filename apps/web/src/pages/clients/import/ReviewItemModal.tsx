@@ -80,7 +80,7 @@ export function ReviewItemModal({
     const payload: ClientPayload = {
       clientType,
       phone,
-      email: email || undefined,
+      email,
       companyInfo: companyInfo as unknown as ClientPayload['companyInfo'],
       legalRepInfo: legalRepInfo as unknown as ClientPayload['legalRepInfo'],
       agentInfos: agentInfos.map(({ key, shops, ...rest }) => ({

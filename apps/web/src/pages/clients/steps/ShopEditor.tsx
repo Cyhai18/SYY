@@ -12,9 +12,12 @@ const PLATFORM_OPTIONS = Object.entries(PLATFORM_LABELS).map(([value, label]) =>
 export function ShopEditor({
   shop,
   onChange,
+  disabled = false,
 }: {
   shop: ShopDraft;
   onChange: (next: ShopDraft) => void;
+  /** 只读展示已存在的店铺（APPEND 模式下），此时隐藏新增/删除操作，所有输入控件禁用。 */
+  disabled?: boolean;
 }) {
   const update = (fields: Partial<ShopDraft>) => onChange({ ...shop, ...fields });
 
@@ -43,37 +46,52 @@ export function ShopEditor({
               <Select
                 value={shop.platform}
                 options={PLATFORM_OPTIONS}
+                disabled={disabled}
                 onChange={(v) => update({ platform: v })}
               />
             </Form.Item>
           </Col>
           <Col span={8}>
             <Form.Item label="店铺名称" required>
-              <Input value={shop.shopName} onChange={(e) => update({ shopName: e.target.value })} />
+              <Input
+                value={shop.shopName}
+                disabled={disabled}
+                onChange={(e) => update({ shopName: e.target.value })}
+              />
             </Form.Item>
           </Col>
           <Col span={8}>
             <Form.Item label="店铺 ID">
-              <Input value={shop.shopId} onChange={(e) => update({ shopId: e.target.value })} />
+              <Input
+                value={shop.shopId}
+                disabled={disabled}
+                onChange={(e) => update({ shopId: e.target.value })}
+              />
             </Form.Item>
           </Col>
           <Col span={8}>
             <Form.Item label="主营类目（英文）" required>
               <Input
                 value={shop.mainCategoryEn}
+                disabled={disabled}
                 onChange={(e) => update({ mainCategoryEn: e.target.value })}
               />
             </Form.Item>
           </Col>
           <Col span={12}>
             <Form.Item label="店铺链接" required>
-              <Input value={shop.shopUrl} onChange={(e) => update({ shopUrl: e.target.value })} />
+              <Input
+                value={shop.shopUrl}
+                disabled={disabled}
+                onChange={(e) => update({ shopUrl: e.target.value })}
+              />
             </Form.Item>
           </Col>
           <Col span={12}>
             <Form.Item label="品牌名称（多个用逗号分隔）" required>
               <Input
                 value={shop.brandNames}
+                disabled={disabled}
                 onChange={(e) => update({ brandNames: e.target.value })}
               />
             </Form.Item>
@@ -98,6 +116,7 @@ export function ShopEditor({
                 style={{ width: 110 }}
                 value={v}
                 options={PLATFORM_OPTIONS}
+                disabled={disabled}
                 onChange={(val) =>
                   update({
                     products: shop.products.map((p) =>
@@ -115,6 +134,7 @@ export function ShopEditor({
               <Input
                 size="small"
                 value={v}
+                disabled={disabled}
                 onChange={(e) =>
                   update({
                     products: shop.products.map((p) =>
@@ -132,6 +152,7 @@ export function ShopEditor({
               <Input
                 size="small"
                 value={v}
+                disabled={disabled}
                 onChange={(e) =>
                   update({
                     products: shop.products.map((p) =>
@@ -149,6 +170,7 @@ export function ShopEditor({
               <Input
                 size="small"
                 value={v}
+                disabled={disabled}
                 onChange={(e) =>
                   update({
                     products: shop.products.map((p) =>
@@ -166,6 +188,7 @@ export function ShopEditor({
               <Input
                 size="small"
                 value={v}
+                disabled={disabled}
                 onChange={(e) =>
                   update({
                     products: shop.products.map((p) =>
@@ -183,6 +206,7 @@ export function ShopEditor({
               <Input
                 size="small"
                 value={v}
+                disabled={disabled}
                 onChange={(e) =>
                   update({
                     products: shop.products.map((p) =>
@@ -193,25 +217,35 @@ export function ShopEditor({
               />
             ),
           },
-          {
-            title: '',
-            dataIndex: 'actions',
-            width: 48,
-            render: (_, r) => (
-              <Button
-                type="text"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() => update({ products: shop.products.filter((p) => p.key !== r.key) })}
-              />
-            ),
-          },
+          ...(disabled
+            ? []
+            : [
+                {
+                  title: '',
+                  dataIndex: 'actions',
+                  width: 48,
+                  render: (_: unknown, r: ShopDraft['products'][number]) => (
+                    <Button
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() =>
+                        update({ products: shop.products.filter((p) => p.key !== r.key) })
+                      }
+                    />
+                  ),
+                },
+              ]),
         ]}
-        footer={() => (
-          <Button type="dashed" block icon={<PlusOutlined />} onClick={addProduct}>
-            新增产品
-          </Button>
-        )}
+        footer={
+          disabled
+            ? undefined
+            : () => (
+                <Button type="dashed" block icon={<PlusOutlined />} onClick={addProduct}>
+                  新增产品
+                </Button>
+              )
+        }
       />
     </div>
   );

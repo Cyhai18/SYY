@@ -16,7 +16,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { AttachmentType } from '@prisma/client';
 import { ClientsService, type ClientAttachmentInput } from './clients.service';
-import { ClientPayloadDto } from './dto/client-payload.dto';
+import { AppendAgentInfoDto, ClientPayloadDto } from './dto/client-payload.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { ListClientsDto } from './dto/list-clients.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -101,9 +101,62 @@ export class ClientsController {
     return this.clientsService.findAll(query, user);
   }
 
+  /**
+   * 供向导 onBlur 防抖触发的实时查重：命中已存在客户时返回基本信息 + 已有代理信息组合，
+   * 前端据此切换到"追加代理信息"模式。必须声明在 `:id` 路由之前，否则会被 `:id` 吞掉。
+   */
+  @Get('duplicate-check')
+  async duplicateCheck(@Query('creditCode') creditCode?: string) {
+    if (!creditCode?.trim()) {
+      throw new BadRequestException('creditCode 不能为空');
+    }
+    const client = await this.clientsService.checkDuplicate(creditCode.trim());
+    return { exists: !!client, client };
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.clientsService.findOne(id, user);
+  }
+
+  /**
+   * 老客户追加代理信息：与 `create()` 一样走 multipart（新上传的证件图片按最新覆盖），
+   * 但目标是已存在客户，统一信用代码/身份证号锁定不可变更，见 ClientsService.appendAgentInfo。
+   */
+  @Post(':id/agent-infos')
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'businessLicenseFile', maxCount: 1 },
+      { name: 'idCardFrontFile', maxCount: 1 },
+      { name: 'idCardBackFile', maxCount: 1 },
+    ]),
+  )
+  async appendAgentInfo(
+    @Param('id') id: string,
+    @Body('payload') payloadJson: string,
+    @UploadedFiles() files: ClientAttachmentFiles,
+    @CurrentUser() user: AuthenticatedUser,
+    @ReqMeta() meta: RequestMeta,
+  ) {
+    const dto = await this.parseAppendPayload(payloadJson);
+    const attachments = this.collectAttachments(files);
+    return this.clientsService.appendAgentInfo(id, dto, user, meta, attachments);
+  }
+
+  private async parseAppendPayload(payloadJson: string): Promise<AppendAgentInfoDto> {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(payloadJson);
+    } catch {
+      throw new BadRequestException('payload 不是合法的 JSON');
+    }
+    const dto = plainToInstance(AppendAgentInfoDto, raw);
+    const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+    if (errors.length) {
+      const message = errors.flatMap((e) => Object.values(e.constraints ?? {})).join('; ');
+      throw new BadRequestException(message || '参数校验失败');
+    }
+    return dto;
   }
 
   @Patch(':id')

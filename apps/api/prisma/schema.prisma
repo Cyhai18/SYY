@@ -34,6 +34,7 @@ model User {
   updatedClients Client[] @relation("ClientUpdatedBy")
   certificates   Certificate[]
   importJobs     ClientImportJob[]
+  trackedClients ClientTracker[]
 }
 
 model ActionLog {
@@ -136,6 +137,7 @@ model Client {
   legalRepInfo LegalRepresentative?
   agentInfos   AgentInfo[]
   attachments  Attachment[]
+  trackers     ClientTracker[] // 除 owner 外，可共同跟踪该客户的其他员工
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -145,6 +147,21 @@ model Client {
   @@index([status])
   @@index([phone])
   @@index([deletedAt])
+}
+
+// 客户跟踪人：一个客户除 owner（主负责人）外，可由多个员工共同跟踪/追加代理信息，
+// 权限判断统一收口在 ClientsService.assertAccess()：owner 本人、trackers 名单内、或 ADMIN/SUPERADMIN 均可访问。
+model ClientTracker {
+  id       String @id @default(uuid())
+  clientId String
+  userId   String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([clientId, userId])
+  @@index([userId])
 }
 
 // 公司/个人主体信息（个人：creditCode 存身份证号）
@@ -159,6 +176,7 @@ model CompanyInfo {
   cityEn     String?
   postalCode String?
   addressEn  String? @db.Text // 不含国家/省/市/邮编
+  contactPerson String? // 联系人，仅公司类型客户必填
   client     Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([creditCode])
@@ -195,6 +213,7 @@ model AgentInfo {
 
   createdAt DateTime @default(now())
 
+  @@unique([clientId, country, agentCompany]) // 同一客户禁止重复添加相同的代理国家+代理公司组合
   @@index([clientId])
   @@index([country])
   @@index([expiresAt])

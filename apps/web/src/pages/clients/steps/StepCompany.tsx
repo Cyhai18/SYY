@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Alert, Col, Form, Input, Row, Upload, message } from 'antd';
+import { Alert, Card, Col, Form, Input, Row, Upload, message } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { useClientWizardStore } from '../../../store/client-wizard-store';
 import { ocrApi } from '../../../lib/ocr-api';
+import { useDuplicateCheck } from '../hooks/useDuplicateCheck';
 
 /** Step1：公司信息，仅公司类型客户可见。上传营业执照后走 OCR 预填，字段全程可编辑。 */
 export function StepCompany() {
@@ -12,8 +13,12 @@ export function StepCompany() {
   const setBusinessLicenseFile = useClientWizardStore((s) => s.setBusinessLicenseFile);
   const markOcrFailed = useClientWizardStore((s) => s.markOcrFailed);
   const ocrFailedHint = useClientWizardStore((s) => s.ocrFailedHint);
+  const phone = useClientWizardStore((s) => s.phone);
+  const email = useClientWizardStore((s) => s.email);
+  const setContact = useClientWizardStore((s) => s.setContact);
   const [recognizing, setRecognizing] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+  const { scheduleDuplicateCheck, isLocked } = useDuplicateCheck('统一信用代码');
 
   const uploadProps: UploadProps = {
     accept: '.jpg,.jpeg,.png,.pdf',
@@ -33,6 +38,7 @@ export function StepCompany() {
       const result = await ocrApi.recognizeBusinessLicense(file);
       if (result.recognized) {
         setCompanyInfo(result.fields);
+        if (result.fields.creditCode) scheduleDuplicateCheck(result.fields.creditCode);
         void message.success('营业执照识别完成，已自动填充，请核对');
       } else {
         markOcrFailed();
@@ -57,6 +63,15 @@ export function StepCompany() {
         />
       ) : null}
 
+      {isLocked ? (
+        <Alert
+          type="info"
+          showIcon
+          message="该客户已存在，正在为其追加代理信息。统一信用代码不可变更，其余信息及本次上传的营业执照将以最新识别/填写内容为准并覆盖更新。"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
+
       <Upload.Dragger {...uploadProps} disabled={recognizing} style={{ marginBottom: 24 }}>
         <p className="ant-upload-drag-icon">
           <InboxOutlined />
@@ -75,7 +90,9 @@ export function StepCompany() {
             <Form.Item label="统一信用代码" required>
               <Input
                 value={companyInfo.creditCode}
+                disabled={isLocked}
                 onChange={(e) => setCompanyInfo({ creditCode: e.target.value })}
+                onBlur={(e) => scheduleDuplicateCheck(e.target.value)}
               />
             </Form.Item>
           </Col>
@@ -139,6 +156,31 @@ export function StepCompany() {
           </Col>
         </Row>
       </Form>
+
+      <Card size="small" title="联系方式" style={{ marginTop: 16 }}>
+        <Form layout="vertical">
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item label="联系手机号" required>
+                <Input value={phone} onChange={(e) => setContact({ phone: e.target.value })} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="邮箱" required>
+                <Input value={email} onChange={(e) => setContact({ email: e.target.value })} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="联系人" required>
+                <Input
+                  value={companyInfo.contactPerson}
+                  onChange={(e) => setCompanyInfo({ contactPerson: e.target.value })}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Card>
     </div>
   );
 }
