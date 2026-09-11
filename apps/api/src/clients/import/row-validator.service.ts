@@ -55,6 +55,23 @@ const AGENT_COMPANY_LABELS: Record<AgentCompany, string> = {
   OVERSEA_WALKERS_TR: 'OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi',
 };
 
+/** 代理公司所属国家，用于在 Excel 模板下拉框里给同名/易混淆的公司加国家后缀做区分，见 AGENT_COMPANY_LABELS_WITH_COUNTRY */
+const AGENT_COMPANY_COUNTRY: Record<AgentCompany, AgentCountry> = {
+  OVERSEA_WALKERS_GB: 'GB',
+  OVERSEA_WALKERS_EU: 'EU',
+  EU_CONSULTEN_SRLS: 'EU',
+  OVERSEA_WALKERS_US: 'US',
+  OVERSEA_WALKERS_TR: 'TR',
+};
+
+/** 代理公司下拉框展示用文案：公司全称 + "（国家）" 后缀，Excel 模板与人工核对表单据此展示，导入时按后缀反查 */
+const AGENT_COMPANY_LABELS_WITH_COUNTRY: Record<AgentCompany, string> = Object.fromEntries(
+  (Object.keys(AGENT_COMPANY_LABELS) as AgentCompany[]).map((key) => [
+    key,
+    `${AGENT_COMPANY_LABELS[key]}（${AGENT_COUNTRY_LABELS[AGENT_COMPANY_COUNTRY[key]]}）`,
+  ]),
+) as Record<AgentCompany, string>;
+
 /** 反查 label -> enum value，找不到时返回 undefined（交由后续 class-validator 判定为必填缺失/不合法） */
 function reverseLabel<T extends string>(labels: Record<T, string>, value?: string): T | undefined {
   if (!value) return undefined;
@@ -63,6 +80,14 @@ function reverseLabel<T extends string>(labels: Record<T, string>, value?: strin
     ([, label]) => label === trimmed,
   );
   return entry?.[0];
+}
+
+/** 代理公司专用反查：兼容带国家后缀（"公司全称（国家）"，Excel 下拉框展示格式）与不带后缀两种填法 */
+function reverseAgentCompany(value?: string): AgentCompany | undefined {
+  return (
+    reverseLabel(AGENT_COMPANY_LABELS_WITH_COUNTRY, value) ??
+    reverseLabel(AGENT_COMPANY_LABELS, value)
+  );
 }
 
 /**
@@ -136,7 +161,7 @@ export class RowValidatorService {
       legalRepInfo,
       agentInfos: parsed.agentInfos.map((agent) => ({
         country: reverseLabel(AGENT_COUNTRY_LABELS, agent.country),
-        agentCompany: reverseLabel(AGENT_COMPANY_LABELS, agent.agentCompany),
+        agentCompany: reverseAgentCompany(agent.agentCompany),
         expectedEffectiveDate: agent.expectedEffectiveDate,
         agentYears: agent.agentYears,
         shops: agent.shops.map((shop) => ({
