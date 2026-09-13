@@ -54,12 +54,12 @@ export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
   INDIVIDUAL: '个人',
 };
 
-export type ClientStatus = 'PENDING_REVIEW' | 'APPROVED' | 'DISABLED';
+export type ClientStatus = 'NORMAL' | 'PENDING_RENEWAL' | 'PENDING_REVIEW';
 
 export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
-  PENDING_REVIEW: '审核中',
-  APPROVED: '已通过',
-  DISABLED: '已禁用',
+  NORMAL: '正常',
+  PENDING_RENEWAL: '待续费',
+  PENDING_REVIEW: '待审核',
 };
 
 export type Platform =
@@ -87,7 +87,8 @@ export const AGENT_COUNTRY_LABELS: Record<AgentCountry, string> = {
 };
 
 export interface CompanyInfoPayload {
-  creditCode: string;
+  /** 仅展示用途，不再作为查重/唯一性键，见 ClientPayload.uniqueIdentifier */
+  creditCode?: string;
   nameCn?: string;
   nameEn?: string;
   addressCn?: string;
@@ -110,11 +111,11 @@ export interface LegalRepresentativePayload {
 
 export interface ProductPayload {
   platform: Platform;
-  productNameCn: string;
-  productNameEn: string;
-  category: string;
-  asinOrSku: string;
-  productUrl: string;
+  productNameCn?: string;
+  productNameEn?: string;
+  category?: string;
+  asinOrSku?: string;
+  productUrl?: string;
   hasBattery?: boolean;
 }
 
@@ -127,7 +128,8 @@ export type AgentCompany =
   | 'OVERSEA_WALKERS_EU'
   | 'EU_CONSULTEN_SRLS'
   | 'OVERSEA_WALKERS_US'
-  | 'OVERSEA_WALKERS_TR';
+  | 'OVERSEA_WALKERS_TR'
+  | 'OVERSEA_WALKERS_CA';
 
 export const AGENT_COMPANY_LABELS: Record<AgentCompany, string> = {
   OVERSEA_WALKERS_GB: 'OVERSEA WALKERS LIMITED',
@@ -135,6 +137,7 @@ export const AGENT_COMPANY_LABELS: Record<AgentCompany, string> = {
   EU_CONSULTEN_SRLS: 'EU Consulten Srls',
   OVERSEA_WALKERS_US: 'Oversea Walkers LLC',
   OVERSEA_WALKERS_TR: 'OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi',
+  OVERSEA_WALKERS_CA: 'Oversea Walkers',
 };
 
 /** 代理国家 -> 可选代理公司列表；选择代理国家后，代理公司下拉框据此过滤选项。 */
@@ -143,7 +146,7 @@ export const AGENT_COUNTRY_COMPANIES: Record<AgentCountry, AgentCompany[]> = {
   EU: ['OVERSEA_WALKERS_EU', 'EU_CONSULTEN_SRLS'],
   US: ['OVERSEA_WALKERS_US'],
   TR: ['OVERSEA_WALKERS_TR'],
-  CA: [],
+  CA: ['OVERSEA_WALKERS_CA'],
 };
 
 export interface ShopPayload {
@@ -161,27 +164,33 @@ export interface AgentInfoPayload {
   expectedEffectiveDate: string;
   agentYears: number;
   agentCompany: AgentCompany;
-  shops?: ShopPayload[];
+  /** 每条代理信息下至少要有一条店铺，后端 AgentInfoDto 用 @ArrayMinSize(1) 强制校验 */
+  shops: ShopPayload[];
 }
 
-/**
- * `checkDuplicate` 查重接口返回的最小字段集合（见 `ClientsService.checkDuplicate` 的隐私说明），
- * 仅供向导展示"该客户已有哪些代理信息"的摘要提示，不是完整的 `AgentInfoPayload`/`ShopPayload`，
- * 不要与两者混用。
- */
-export interface DuplicateCheckShop {
-  platform: Platform;
-  shopName: string;
-  productCount: number;
-}
+/** `checkDuplicate` 命中已存在客户时一并带出的已有代理信息摘要（不含店铺/产品明细），
+ * 用于代理信息步骤禁用已占用的代理国家选项，避免重复追加同一国家。 */
 export interface DuplicateCheckAgentInfo {
   country: AgentCountry;
   agentCompany: AgentCompany;
-  shops: DuplicateCheckShop[];
+  expectedEffectiveDate: string;
+  agentYears: number;
 }
+
+/**
+ * `checkDuplicate` 查重接口命中已存在客户时返回的信息：统一信用代码/身份证号两个输入框
+ * 禁止手动编辑、只能由证件 OCR 识别得出，命中后前端据此把 `companyInfo`/`legalRepInfo`/
+ * 联系方式回填到对应表单 tab，客户已有信息不用再重新手填；`agentInfos` 用于代理信息步骤
+ * 禁用已存在的代理国家选项。
+ */
 export interface DuplicateCheckResult {
   id: string;
-  agentInfos: DuplicateCheckAgentInfo[];
+  phone: string;
+  email?: string;
+  remark?: string;
+  companyInfo?: CompanyInfoPayload;
+  legalRepInfo?: LegalRepresentativePayload;
+  agentInfos?: DuplicateCheckAgentInfo[];
 }
 
 /** OCR 识别接口的统一返回结构：`fields` 为结构化字段，`recognized` 标记是否识别成功。营业执照/身份证图片仅用于识别，不落盘、不返回 fileUrl。 */
@@ -216,10 +225,32 @@ export interface ClientPayload {
   phone: string;
   email: string;
   remark?: string;
+  /** 客户唯一标识：公司存统一社会信用代码，个人存身份证号，落在 Client.uniqueIdentifier */
+  uniqueIdentifier: string;
   companyInfo: CompanyInfoPayload;
   /** 公司类型客户不再采集法人信息，仅个人类型客户必填 */
   legalRepInfo?: LegalRepresentativePayload;
   agentInfos: AgentInfoPayload[];
+}
+
+/** 代理证书后台生成状态机，与 Prisma `CertificateStatus` 枚举保持一致，见 docs/certificate-generation-design.md */
+export type CertificateStatus = 'NONE' | 'PENDING' | 'GENERATING' | 'SUCCESS' | 'FAILED';
+
+export const CERTIFICATE_STATUS_LABELS: Record<CertificateStatus, string> = {
+  NONE: '未生成',
+  PENDING: '等待生成',
+  GENERATING: '生成中',
+  SUCCESS: '已生成',
+  FAILED: '生成失败',
+};
+
+/** 某条代理信息的历史证书生成记录（仅归档成功的），供列表页"查看证书"弹窗展示 + 下载。 */
+export interface CertificateRecord {
+  id: string;
+  agentInfoId: string;
+  agreementNumber: string;
+  fileUrl: string | null;
+  createdAt: string;
 }
 
 /** 客户列表行中，某一条代理信息的摘要（展开子表格用），支持针对该条代理信息单独发起操作（如查看证书）。 */
@@ -230,6 +261,8 @@ export interface AgentInfoSummary {
   expectedEffectiveDate: string;
   expiresAt: string;
   shopCount: number;
+  certificateStatus: CertificateStatus;
+  certificateError: string | null;
 }
 
 /**

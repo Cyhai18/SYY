@@ -14,7 +14,7 @@ const OPTIONS: { type: ClientType; title: string; desc: string; icon: React.Reac
   {
     type: 'INDIVIDUAL',
     title: '个人',
-    desc: '直接填写法人（个人）身份信息',
+    desc: '需上传身份证，自动识别个人信息',
     icon: <UserOutlined style={{ fontSize: 32, color: brandColors.primary }} />,
   },
 ];

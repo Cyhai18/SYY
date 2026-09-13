@@ -50,6 +50,9 @@ export const clientImportApi = {
     return apiClient.postMultipart<ImportJob>('/clients/import', formData);
   },
 
+  /** 下载官方批量导入模板（需鉴权，走二进制下载接口，与证书下载同一套逻辑）。 */
+  downloadTemplate: () => apiClient.getBinary('/clients/import/template'),
+
   list: (params: { page?: number; pageSize?: number; status?: ImportJobStatus } = {}) => {
     const query = new URLSearchParams();
     if (params.page) query.set('page', String(params.page));

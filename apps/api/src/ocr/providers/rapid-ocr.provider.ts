@@ -61,7 +61,14 @@ export class RapidOcrProvider implements OcrProvider {
       cityEn: raw.fields.city_en || undefined,
       postalCode: raw.fields.postal_code || undefined,
     };
-    return { fields, rawText: raw.rawText, recognized: true };
+    // 必须识别出统一信用代码才算成功，不能只要微服务调用成功就判定 true：
+    // 营业执照的地址提取规则里标签包含"住址"（parsers.py `_BL_ADDR_LABELS`），与身份证正面的
+    // "住址"字段撞标签——如果用户把身份证误传到"上传营业执照"框，微服务调用不会报错，
+    // 会把身份证地址误判成公司地址提取出来，此时若仍返回 recognized:true，前端会直接
+    // setCompanyInfo(result.fields) 把这个错误地址写入公司信息表单，还提示"识别完成"。
+    // 要求 creditCode 非空才算识别成功，能同时挡住这种误传文档、以及信用代码本身没提出来的情况。
+    const recognized = Boolean(fields.creditCode);
+    return { fields, rawText: raw.rawText, recognized };
   }
 
   async recognizeIdCard(
@@ -78,7 +85,12 @@ export class RapidOcrProvider implements OcrProvider {
       idAddressEn: raw.fields.address_en || undefined,
       idPostalCode: raw.fields.postal_code || undefined,
     };
-    return { fields, rawText: raw.rawText, recognized: true };
+    // 正面：必须识别出身份证号才算成功，否则前端会误判"识别完成"而静默跳过查重
+    // （见 ocr.service.ts 的 recognized 判定）；反面不提取任何字段，且前端已改为
+    // 反面上传直接跳过 OCR 调用（见 StepLegalRep.tsx），这里的分支理论上不会再被触发，
+    // 保留 true 仅作为兜底防御。
+    const recognized = side === 'front' ? Boolean(fields.idNumber) : true;
+    return { fields, rawText: raw.rawText, recognized };
   }
 
   private async callService(

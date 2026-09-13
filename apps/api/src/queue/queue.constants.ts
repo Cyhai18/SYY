@@ -12,3 +12,15 @@ export interface ClientImportJobData {
   jobId: string;
   zipFilePath: string;
 }
+
+/** 代理证书后台生成 BullMQ 队列名称，见 docs/certificate-generation-design.md 异步生成方案。 */
+export const CERTIFICATE_GENERATE_QUEUE_NAME = 'certificate-generate';
+
+/** 证书生成 BullMQ Queue（生产者）的注入 token；Worker 侧见 certificate.processor.ts 消费。 */
+export const CERTIFICATE_GENERATE_QUEUE = Symbol('CERTIFICATE_GENERATE_QUEUE');
+
+/** 证书生成任务 payload：只带 agentInfoId + 触发人 id，具体数据从 DB 查询。 */
+export interface CertificateGenerateJobData {
+  agentInfoId: string;
+  actorId: string;
+}

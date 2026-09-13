@@ -89,10 +89,10 @@ export function ClientImportProgressPage() {
     <div className="client-import-progress-page">
       <Card bordered={false} style={{ marginBottom: 16 }}>
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              {job.fileName}
-            </Typography.Title>
+          {/* 压缩包文件名来自 multer/busboy 对 multipart 请求头的 latin1 解码，中文文件名会
+              乱码（浏览器实际用 UTF-8 编码发送），且非展示层问题无法在前端简单修复，故不展示。
+              批次信息已有下方进度条 + 统计数字，不影响核对流程。 */}
+          <Space align="center" style={{ justifyContent: 'flex-end', width: '100%' }}>
             <Button onClick={() => navigate('/clients')}>返回客户列表</Button>
           </Space>
           <Progress
@@ -120,7 +120,7 @@ export function ClientImportProgressPage() {
           dataSource={filteredItems}
           pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
           columns={[
-            { title: '文件名', dataIndex: 'fileName' },
+            { title: '文件名', dataIndex: 'fileName', width: 120 },
             {
               title: '状态',
               dataIndex: 'status',

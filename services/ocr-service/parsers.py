@@ -164,7 +164,6 @@ _CC_CHARS = "0123456789ABCDEFGHJKLMNPQRTUWXY"
 _CC_INDEX = {c: i for i, c in enumerate(_CC_CHARS)}
 _CC_WEIGHTS = [1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28]
 _CC_FORBIDDEN = set("IOZSV")
-_CC_SAFE_FIX = {"I": "1", "O": "0", "Z": "2"}
 _CC_CONFUSE = {
     "S": ["8", "5", "6"], "O": ["0", "D", "Q"], "I": ["1"], "Z": ["2", "7"],
     "V": ["Y", "U"], "B": ["8"], "D": ["0"], "G": ["6", "9"], "Q": ["0"],
@@ -212,11 +211,21 @@ def _find_credit_code(text: str) -> str:
     for c in candidates:
         if _cc_valid(c):
             return c
-    best = min(candidates, key=lambda c: sum(ch in _CC_FORBIDDEN for ch in c))
+    # 只对含有 OCR 易混淆的禁用字符（I/O/Z/S/V）的候选做纠错重试：纯数字/字母的 18 位串
+    # （例如身份证号误传到营业执照框时提取到的号码）本身就不含这些禁用字符，说明它并非
+    # OCR 误识导致校验位不过，而是本来就不是信用代码——不应该被当作"最接近"的兜底强行返回，
+    # 否则会把身份证号误判成统一社会信用代码写入公司信息表单。
+    candidates_with_forbidden = [c for c in candidates if any(ch in _CC_FORBIDDEN for ch in c)]
+    if not candidates_with_forbidden:
+        return ""
+    best = min(candidates_with_forbidden, key=lambda c: sum(ch in _CC_FORBIDDEN for ch in c))
     fixed = _cc_correct(best)
     if fixed:
         return fixed
-    return "".join(_CC_SAFE_FIX.get(ch, ch) for ch in best)
+    return ""
+
+
+_ID_CARD_MARKERS = re.compile(r"公民身份号码|居民身份证|中华人民共和国居民身份证")
 
 
 _ID_NUMBER_RE = re.compile(r"\d{6}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]")
@@ -242,6 +251,12 @@ def extract_fields(doc_type: str, lines: list[str]) -> dict[str, Any]:
         return fields
 
     if doc_type == "business_license":
+        # 身份证正反面误传到营业执照框时，文本里会出现"公民身份号码/居民身份证"等
+        # 专属标志，这类文本本身就不含营业执照信息（名称/地址/统一信用代码），
+        # 直接短路返回空字段，避免"住址"标签被 _find_address 当作经营场所误抽取、
+        # 姓名被当作公司名/法定代表人误抽取。
+        if _ID_CARD_MARKERS.search(text):
+            return fields
         fields["credit_code"] = _find_credit_code(text)
         m = re.search(r"(?:名\s*称|名称)[:：]?\s*([^\n]+)", text)
         if m:

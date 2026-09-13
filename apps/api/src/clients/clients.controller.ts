@@ -14,7 +14,7 @@ import {
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { AttachmentType } from '@prisma/client';
+import { AttachmentType, ClientStatus } from '@prisma/client';
 import { ClientsService, type ClientAttachmentInput } from './clients.service';
 import { AppendAgentInfoDto, ClientPayloadDto } from './dto/client-payload.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -56,7 +56,35 @@ export class ClientsController {
   ) {
     const dto = await this.parsePayload(payloadJson);
     const attachments = this.collectAttachments(files);
-    return this.clientsService.createClient(dto, user, meta, undefined, attachments);
+    this.assertRequiredAttachments(dto.clientType, attachments);
+    // /clients/new 向导录入的客户统一置为"正常"，与批量导入（默认待审核）区分开。
+    return this.clientsService.createClient(
+      dto,
+      user,
+      meta,
+      undefined,
+      attachments,
+      ClientStatus.NORMAL,
+    );
+  }
+
+  /**
+   * 单条录入向导要求营业执照/身份证图片必填（批量导入走 Excel 内嵌图片，识别失败会转人工核对，
+   * 不在此处强制，避免误伤既有导入流程）。
+   */
+  private assertRequiredAttachments(
+    clientType: ClientPayloadDto['clientType'],
+    attachments: ClientAttachmentInput[],
+  ) {
+    const types = new Set(attachments.map((a) => a.type));
+    if (clientType === 'COMPANY' && !types.has(AttachmentType.BUSINESS_LICENSE)) {
+      throw new BadRequestException('请上传营业执照');
+    }
+    if (clientType === 'INDIVIDUAL') {
+      if (!types.has(AttachmentType.ID_CARD_FRONT) || !types.has(AttachmentType.ID_CARD_BACK)) {
+        throw new BadRequestException('请上传身份证人像面和国徽面');
+      }
+    }
   }
 
   private async parsePayload(payloadJson: string): Promise<ClientPayloadDto> {
@@ -102,8 +130,9 @@ export class ClientsController {
   }
 
   /**
-   * 供向导 onBlur 防抖触发的实时查重：命中已存在客户时返回基本信息 + 已有代理信息组合，
-   * 前端据此切换到"追加代理信息"模式。必须声明在 `:id` 路由之前，否则会被 `:id` 吞掉。
+   * 供证件 OCR 识别成功后触发的查重：统一信用代码/身份证号禁止手动编辑，只能由 OCR 识别得出，
+   * 命中已存在客户时返回其 companyInfo/legalRepInfo 供前端回填表单，并切换到"追加代理信息"模式。
+   * 必须声明在 `:id` 路由之前，否则会被 `:id` 吞掉。
    */
   @Get('duplicate-check')
   async duplicateCheck(@Query('creditCode') creditCode?: string) {

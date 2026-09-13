@@ -5,7 +5,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { AttachmentType } from '@prisma/client';
+import { AttachmentType, ClientStatus } from '@prisma/client';
 import { Job, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { unlink } from 'node:fs/promises';
@@ -185,12 +185,15 @@ export class ClientImportProcessor implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
+      // 批量导入自动校验通过（无需人工核对）的客户，与单条录入向导一致直接置为"正常"，
+      // 不再落在默认的 PENDING_REVIEW，避免导入成功后客户列表里还显示"待审核"。
       const client = await this.clientsService.createClient(
         result.payload,
         actor,
         meta,
         undefined,
         attachments,
+        ClientStatus.NORMAL,
       );
       await this.prisma.clientImportItem.update({
         where: { id: itemId },

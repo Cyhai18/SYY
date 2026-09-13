@@ -7,10 +7,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AttachmentType, Prisma, Role } from '@prisma/client';
+import { AttachmentType, ClientStatus, Prisma, Role } from '@prisma/client';
+import type { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActionLogService } from '../common/action-log/action-log.service';
 import { FILE_STORAGE, type FileStorageService } from '../storage/file-storage.service';
+import {
+  CERTIFICATE_GENERATE_QUEUE,
+  type CertificateGenerateJobData,
+} from '../queue/queue.constants';
 import type { RequestMeta } from '../auth/auth.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import type {
@@ -41,19 +46,71 @@ export class ClientsService {
     private readonly prisma: PrismaService,
     private readonly actionLogService: ActionLogService,
     @Inject(FILE_STORAGE) private readonly fileStorage: FileStorageService,
+    @Inject(CERTIFICATE_GENERATE_QUEUE)
+    private readonly certificateQueue: Queue<CertificateGenerateJobData>,
   ) {}
 
   /**
-   * 按注册类型选取去重键查重：公司类型用统一信用代码，个人类型用身份证号，
-   * 两者都落在 `CompanyInfo.creditCode`（见 schema.prisma 注释）。
+   * 建档/追加代理信息成功后，对指定的 agentInfoIds 逐条置 `certificateStatus = PENDING` 并入队，
+   * 交由 `CertificateProcessor`（BullMQ Worker）后台生成证书；不阻塞客户创建主流程，
+   * 入队失败只记 warning（见 docs/certificate-generation-design.md 异步生成方案）。
+   */
+  private async enqueueCertificateGeneration(agentInfoIds: string[], actorId: string) {
+    if (!agentInfoIds.length) return;
+    try {
+      await this.prisma.agentInfo.updateMany({
+        where: { id: { in: agentInfoIds } },
+        data: { certificateStatus: 'PENDING', certificateError: null },
+      });
+      await Promise.all(
+        agentInfoIds.map((agentInfoId) =>
+          this.certificateQueue.add('generate', { agentInfoId, actorId }),
+        ),
+      );
+    } catch (err) {
+      this.logger.warn(`证书生成入队失败，不影响客户创建：err=${String(err)}`);
+    }
+  }
+
+  /**
+   * 主体信息/法人信息中，除 DTO 已声明必填的字段外，按 clientType 额外要求必填的字段。
+   * 公司类型：公司中文名、公司英文名、公司中文地址、公司英文地址、邮编（联系人已在调用处单独校验）；
+   * 个人类型：身份证地址（英文）、邮编。
+   */
+  private assertRequiredFields(
+    clientType: 'COMPANY' | 'INDIVIDUAL',
+    companyInfo: {
+      nameCn?: string;
+      nameEn?: string;
+      addressCn?: string;
+      addressEn?: string;
+      postalCode?: string;
+    },
+    legalRepInfo?: { idAddressEn?: string; idPostalCode?: string },
+  ) {
+    if (clientType === 'COMPANY') {
+      if (!companyInfo.nameCn) throw new BadRequestException('公司中文名不能为空');
+      if (!companyInfo.nameEn) throw new BadRequestException('公司英文名不能为空');
+      if (!companyInfo.addressCn) throw new BadRequestException('公司中文地址不能为空');
+      if (!companyInfo.addressEn) throw new BadRequestException('公司英文地址不能为空');
+      if (!companyInfo.postalCode) throw new BadRequestException('邮编不能为空');
+    }
+    if (clientType === 'INDIVIDUAL') {
+      if (!legalRepInfo?.idAddressEn) throw new BadRequestException('身份证地址（英文）不能为空');
+      if (!legalRepInfo?.idPostalCode) throw new BadRequestException('邮编不能为空');
+    }
+  }
+
+  /**
+   * 按客户唯一标识（`Client.uniqueIdentifier`：公司存统一信用代码，个人存身份证号）查重。
    * 见 docs/client-batch-import-design.md 第 8 节。
    *
    * 仅供服务端内部使用（`createClient` 建档前硬阻断查重），带出完整 `companyInfo`/`legalRepInfo`。
    * 面向前端 onBlur 触发的查重请使用 `checkDuplicate`，其只返回展示所需的最小字段以避免信息泄露。
    */
-  async findDuplicate(creditCode: string) {
+  async findDuplicate(uniqueIdentifier: string) {
     return this.prisma.client.findFirst({
-      where: { deletedAt: null, companyInfo: { creditCode } },
+      where: { deletedAt: null, uniqueIdentifier },
       include: {
         companyInfo: true,
         legalRepInfo: true,
@@ -63,31 +120,49 @@ export class ClientsService {
   }
 
   /**
-   * 供向导 onBlur 触发的实时查重使用（未登录态也可能高频触发，不做 `assertAccess` 权限拦截——
-   * 命中的客户可能归属别的员工，业务上允许"发现老客户要追加新代理信息"的员工后续加入该客户的
-   * 跟踪名单，见 `appendAgentInfo`）。
-   *
-   * 但正因为不做权限拦截，这里刻意**只返回展示代理信息卡片所需的最小字段**（国家/代理公司/店铺/
-   * 产品数量），不包含 `companyInfo`/`legalRepInfo` 等公司名称、法人身份证等敏感信息，避免任意登录
-   * 用户靠试统一信用代码/身份证号撞库窥探他人客户的完整资料。未命中返回 `null`。
+   * 供向导查重使用：统一信用代码/身份证号两个输入框已禁止手动编辑，只能由证件 OCR 识别得出，
+   * 因此该接口只会在 OCR 识别成功后触发一次，不再有 onBlur 高频触发的顾虑，故不做 `assertAccess`
+   * 权限拦截，直接返回命中客户的完整 `companyInfo`/`legalRepInfo`/联系方式/已有代理信息，供前端
+   * 回填对应表单 tab、并禁用已存在的代理国家选项，避免用户已上传过证件的老客户还要重新手填一遍，
+   * 或不小心为同一国家重复追加代理信息。未命中返回 `null`。
    */
-  async checkDuplicate(creditCode: string) {
+  async checkDuplicate(uniqueIdentifier: string) {
     const client = await this.prisma.client.findFirst({
-      where: { deletedAt: null, companyInfo: { creditCode } },
+      where: { deletedAt: null, uniqueIdentifier },
       select: {
         id: true,
+        phone: true,
+        email: true,
+        remark: true,
+        companyInfo: {
+          select: {
+            creditCode: true,
+            nameCn: true,
+            nameEn: true,
+            addressCn: true,
+            provinceEn: true,
+            cityEn: true,
+            postalCode: true,
+            addressEn: true,
+            contactPerson: true,
+          },
+        },
+        legalRepInfo: {
+          select: {
+            nameCn: true,
+            namePinyin: true,
+            idNumber: true,
+            idAddressCn: true,
+            idPostalCode: true,
+            idAddressEn: true,
+          },
+        },
         agentInfos: {
           select: {
             country: true,
             agentCompany: true,
-            shops: {
-              select: {
-                platform: true,
-                shopName: true,
-                // 只需数量用于展示，避免把每个店铺下的产品 id 列表都传回前端
-                _count: { select: { products: true } },
-              },
-            },
+            expectedEffectiveDate: true,
+            agentYears: true,
           },
         },
       },
@@ -95,14 +170,16 @@ export class ClientsService {
     if (!client) return null;
     return {
       id: client.id,
-      agentInfos: client.agentInfos.map((agent) => ({
-        country: agent.country,
-        agentCompany: agent.agentCompany,
-        shops: agent.shops.map((shop) => ({
-          platform: shop.platform,
-          shopName: shop.shopName,
-          productCount: shop._count.products,
-        })),
+      phone: client.phone,
+      email: client.email ?? undefined,
+      remark: client.remark ?? undefined,
+      companyInfo: client.companyInfo ?? undefined,
+      legalRepInfo: client.legalRepInfo ?? undefined,
+      agentInfos: client.agentInfos.map((a) => ({
+        country: a.country,
+        agentCompany: a.agentCompany,
+        expectedEffectiveDate: a.expectedEffectiveDate.toISOString(),
+        agentYears: a.agentYears,
       })),
     };
   }
@@ -117,8 +194,9 @@ export class ClientsService {
     meta: RequestMeta,
     ownerId?: string,
     attachments?: ClientAttachmentInput[],
+    status?: ClientStatus,
   ) {
-    const duplicate = await this.findDuplicate(payload.companyInfo.creditCode);
+    const duplicate = await this.findDuplicate(payload.uniqueIdentifier);
     if (duplicate) {
       throw new ConflictException(
         `该客户已存在（${duplicate.companyInfo?.nameCn ?? duplicate.companyInfo?.nameEn ?? duplicate.phone}），请勿重复创建`,
@@ -131,6 +209,7 @@ export class ClientsService {
     if (payload.clientType === 'INDIVIDUAL' && !payload.legalRepInfo) {
       throw new BadRequestException('法人信息不能为空');
     }
+    this.assertRequiredFields(payload.clientType, payload.companyInfo, payload.legalRepInfo);
     const client = await this.prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
         data: {
@@ -138,6 +217,8 @@ export class ClientsService {
           phone: payload.phone,
           email: payload.email,
           remark: payload.remark,
+          uniqueIdentifier: payload.uniqueIdentifier,
+          status,
           ownerId: ownerId ?? actor.id,
           createdById: actor.id,
           updatedById: actor.id,
@@ -182,12 +263,25 @@ export class ClientsService {
       await this.saveAttachments(client.id, attachments);
     }
 
+    // 建档提交的全部代理信息都是新增的，成功入库后统一触发后台生成证书。
+    await this.enqueueCertificateGeneration(
+      client.agentInfos.map((a) => a.id),
+      actor.id,
+    );
+
     return this.findOne(client.id, actor);
   }
 
+  /**
+   * 每个客户每种证件类型只保留最新一份（`Attachment` 已加 `@@unique([clientId, type])`）：
+   * 重新上传时 upsert 覆盖旧记录，DB 提交成功后再删除旧物理文件（删除失败只记 warning，不回滚）。
+   */
   private async saveAttachments(clientId: string, attachments: ClientAttachmentInput[]) {
     for (const attachment of attachments) {
       try {
+        const existing = await this.prisma.attachment.findUnique({
+          where: { clientId_type: { clientId, type: attachment.type } },
+        });
         const { fileUrl } = await this.fileStorage.save({
           clientId,
           type: attachment.type,
@@ -195,9 +289,14 @@ export class ClientsService {
           mimetype: attachment.mimetype,
           originalName: attachment.originalName,
         });
-        await this.prisma.attachment.create({
-          data: { clientId, type: attachment.type, fileUrl },
+        await this.prisma.attachment.upsert({
+          where: { clientId_type: { clientId, type: attachment.type } },
+          update: { fileUrl },
+          create: { clientId, type: attachment.type, fileUrl },
         });
+        if (existing && existing.fileUrl !== fileUrl) {
+          await this.fileStorage.delete(existing.fileUrl);
+        }
       } catch (err) {
         this.logger.warn(
           `附件落盘失败，不影响客户创建：clientId=${clientId} type=${attachment.type} err=${String(err)}`,
@@ -246,6 +345,8 @@ export class ClientsService {
           legalRepInfo: true,
           owner: true,
           agentInfos: {
+            // 按代理国家筛选时，只返回匹配该国家的代理信息，不展示该客户的其他国家代理
+            ...(query.agentCountry ? { where: { country: query.agentCountry } } : {}),
             include: { shops: { select: { id: true } } },
             orderBy: { createdAt: 'asc' },
           },
@@ -279,6 +380,8 @@ export class ClientsService {
           expectedEffectiveDate: a.expectedEffectiveDate.toISOString(),
           expiresAt: a.expiresAt.toISOString(),
           shopCount: a.shops.length,
+          certificateStatus: a.certificateStatus,
+          certificateError: a.certificateError,
         })),
       })),
     };
@@ -303,19 +406,16 @@ export class ClientsService {
 
   async update(id: string, dto: UpdateClientDto, actor: AuthenticatedUser, meta: RequestMeta) {
     const existing = await this.findOne(id, actor);
-    // 统一信用代码/身份证号是客户唯一标识，一旦客户存在即不可通过编辑接口变更，见 stripImmutableIdentifiers。
-    const { companyInfo, legalRepInfo } = stripImmutableIdentifiers(
-      dto.companyInfo,
-      dto.legalRepInfo,
-    );
+    // Client.uniqueIdentifier 是客户唯一标识，一旦客户存在即不可通过编辑接口变更；
+    // companyInfo.creditCode/legalRepInfo.idNumber 已降级为仅展示字段，可随其余信息一并更新。
     await this.prisma.client.update({
       where: { id },
       data: {
         email: dto.email,
         remark: dto.remark,
         updatedById: actor.id,
-        companyInfo: companyInfo ? { update: companyInfo } : undefined,
-        legalRepInfo: legalRepInfo ? { update: legalRepInfo } : undefined,
+        companyInfo: dto.companyInfo ? { update: dto.companyInfo } : undefined,
+        legalRepInfo: dto.legalRepInfo ? { update: dto.legalRepInfo } : undefined,
       },
     });
     await this.actionLogService.record({
@@ -356,6 +456,7 @@ export class ClientsService {
     if (existing.clientType === 'INDIVIDUAL' && !payload.legalRepInfo) {
       throw new BadRequestException('法人信息不能为空');
     }
+    this.assertRequiredFields(existing.clientType, payload.companyInfo, payload.legalRepInfo);
 
     const existingCombos = new Set(
       existing.agentInfos.map((a) => `${a.country}:${a.agentCompany}`),
@@ -371,20 +472,15 @@ export class ClientsService {
       seenCombos.add(combo);
     }
 
-    const { companyInfo, legalRepInfo } = stripImmutableIdentifiers(
-      payload.companyInfo,
-      payload.legalRepInfo,
-    );
-
-    const client = await this.prisma.$transaction(async (tx) => {
+    const { client, newAgentInfoIds } = await this.prisma.$transaction(async (tx) => {
       await tx.client.update({
         where: { id: clientId },
         data: {
           email: payload.email,
           remark: payload.remark,
           updatedById: actor.id,
-          companyInfo: companyInfo ? { update: companyInfo } : undefined,
-          legalRepInfo: legalRepInfo ? { update: legalRepInfo } : undefined,
+          companyInfo: payload.companyInfo ? { update: payload.companyInfo } : undefined,
+          legalRepInfo: payload.legalRepInfo ? { update: payload.legalRepInfo } : undefined,
           // 追加代理信息的操作人自动成为该客户的跟踪人之一，已在名单内则原样跳过
           trackers: {
             upsert: {
@@ -396,17 +492,22 @@ export class ClientsService {
         },
       });
 
+      const newAgentInfoIds: string[] = [];
       for (const agent of payload.agentInfos) {
-        await tx.agentInfo.create({
+        const created = await tx.agentInfo.create({
           data: {
             clientId,
             ...buildAgentInfoScalars(agent),
             shops: buildShopsCreateInput(agent.shops, clientId),
           },
         });
+        newAgentInfoIds.push(created.id);
       }
 
-      return tx.client.findUniqueOrThrow({ where: { id: clientId } });
+      return {
+        client: await tx.client.findUniqueOrThrow({ where: { id: clientId } }),
+        newAgentInfoIds,
+      };
     });
 
     await this.actionLogService.record({
@@ -426,6 +527,9 @@ export class ClientsService {
     if (attachments?.length) {
       await this.saveAttachments(client.id, attachments);
     }
+
+    // APPEND 模式只对本次新增的代理信息触发生成，老的代理信息不受影响。
+    await this.enqueueCertificateGeneration(newAgentInfoIds, actor.id);
 
     return this.findOne(client.id, actor);
   }
@@ -461,22 +565,6 @@ export class ClientsService {
       throw new ForbiddenException('无权访问该客户');
     }
   }
-}
-
-/**
- * 统一信用代码 / 身份证号是客户唯一标识，一旦客户存在即不可通过编辑类接口变更，
- * 落库前统一在此剔除，避免任何调用方（单条编辑、追加代理信息）不慎覆盖唯一标识。
- */
-function stripImmutableIdentifiers<
-  C extends { creditCode: string } | undefined,
-  L extends { idNumber: string } | undefined,
->(companyInfo: C, legalRepInfo: L) {
-  const { creditCode: _creditCode, ...companyRest } = companyInfo ?? {};
-  const { idNumber: _idNumber, ...legalRepRest } = legalRepInfo ?? {};
-  return {
-    companyInfo: companyInfo ? companyRest : undefined,
-    legalRepInfo: legalRepInfo ? legalRepRest : undefined,
-  };
 }
 
 function addYears(date: Date, years: number): Date {

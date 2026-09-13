@@ -23,10 +23,8 @@ import { AgentCompany, AgentCountry, ClientType, Platform } from '@prisma/client
  * 所有增删改统一走 `ClientsService.createClient()`，此 DTO 是唯一入口的数据契约。
  */
 export class CompanyInfoDto {
-  @IsString()
-  @MinLength(1, { message: '统一信用代码/身份证号不能为空' })
-  @MaxLength(64)
-  creditCode!: string;
+  /** 仅展示用途，不再作为查重/唯一性键，见 Client.uniqueIdentifier */
+  @IsOptional() @IsString() @MaxLength(64) creditCode?: string;
 
   @IsOptional() @IsString() @MaxLength(200) nameCn?: string;
   @IsOptional() @IsString() @MaxLength(200) nameEn?: string;
@@ -50,11 +48,11 @@ export class LegalRepresentativeDto {
 
 export class ProductDto {
   @IsEnum(Platform, { message: '平台不合法' }) platform!: Platform;
-  @IsString() @MinLength(1) @MaxLength(200) productNameCn!: string;
-  @IsString() @MinLength(1) @MaxLength(200) productNameEn!: string;
-  @IsString() @MinLength(1) @MaxLength(100) category!: string;
-  @IsString() @MinLength(1) @MaxLength(100) asinOrSku!: string;
-  @IsString() @MinLength(1) productUrl!: string;
+  @IsOptional() @IsString() @MaxLength(200) productNameCn?: string;
+  @IsOptional() @IsString() @MaxLength(200) productNameEn?: string;
+  @IsOptional() @IsString() @MaxLength(100) category?: string;
+  @IsOptional() @IsString() @MaxLength(100) asinOrSku?: string;
+  @IsOptional() @IsString() productUrl?: string;
   @IsOptional() @IsBoolean() hasBattery?: boolean;
 }
 
@@ -79,11 +77,12 @@ export class AgentInfoDto {
   @IsInt() @Min(1) @Max(20) agentYears!: number;
   @IsEnum(AgentCompany, { message: '代理公司不合法' }) agentCompany!: AgentCompany;
 
-  @IsOptional()
+  /** 每条代理信息下至少要有一条店铺，与页面 AgentInfoEditor 的强制校验保持一致 */
   @IsArray()
+  @ArrayMinSize(1, { message: '每条代理信息下至少需要一条店铺信息' })
   @ValidateNested({ each: true })
   @Type(() => ShopDto)
-  shops?: ShopDto[];
+  shops!: ShopDto[];
 }
 
 export class ClientPayloadDto {
@@ -94,6 +93,12 @@ export class ClientPayloadDto {
   @IsEmail({}, { message: '邮箱格式不正确' }) email!: string;
 
   @IsOptional() @IsString() remark?: string;
+
+  /** 客户唯一标识：公司存统一社会信用代码，个人存身份证号，落在 Client.uniqueIdentifier */
+  @IsString()
+  @MinLength(1, { message: '统一信用代码/身份证号不能为空' })
+  @MaxLength(64)
+  uniqueIdentifier!: string;
 
   @ValidateNested() @Type(() => CompanyInfoDto) companyInfo!: CompanyInfoDto;
 
@@ -112,9 +117,8 @@ export class ClientPayloadDto {
 
 /**
  * 已存在客户追加代理信息（见 docs/client-profile-design.md「老客户追加代理信息」一节）。
- * companyInfo.creditCode / legalRepInfo.idNumber 是客户唯一标识，一旦客户存在即不可变更，
- * 前端会照旧回传当前值以通过校验，但 `ClientsService.appendAgentInfo()` 落库时会显式剔除这两个字段、
- * 只更新其余主体/法人信息，避免误改唯一标识导致与已有客户"错位"。
+ * `Client.uniqueIdentifier` 是客户唯一标识，一旦客户存在即不可变更，
+ * `ClientsService.appendAgentInfo()` 落库时不会更新该字段，只更新其余主体/法人信息。
  */
 export class AppendAgentInfoDto {
   @IsOptional() @IsEmail({}, { message: '邮箱格式不正确' }) email?: string;

@@ -17,11 +17,13 @@ import {
 } from 'antd';
 import type { TablePaginationConfig } from 'antd/es/table';
 import {
+  DownloadOutlined,
   EyeOutlined,
   FilePdfOutlined,
   FileProtectOutlined,
   InboxOutlined,
   PlusOutlined,
+  ReloadOutlined,
   SearchOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
@@ -29,9 +31,11 @@ import { useNavigate } from 'react-router-dom';
 import {
   AGENT_COMPANY_LABELS,
   AGENT_COUNTRY_LABELS,
+  CERTIFICATE_STATUS_LABELS,
   CLIENT_STATUS_LABELS,
   CLIENT_TYPE_LABELS,
   type AgentInfoSummary,
+  type CertificateRecord,
   type ClientListItem,
   type ClientStatus,
   type ClientType,
@@ -40,6 +44,7 @@ import { clientsApi, type ListClientsParams } from '../../lib/clients-api';
 import { clientImportApi } from '../../lib/client-import-api';
 import { brandColors } from '../../theme';
 import { ClientDetailDrawer } from './ClientDetailDrawer';
+import { AgentInfoDetailDrawer } from './AgentInfoDetailDrawer';
 
 const { RangePicker } = DatePicker;
 
@@ -52,9 +57,17 @@ interface SearchFormValues {
 }
 
 const STATUS_COLOR: Record<ClientStatus, string> = {
-  PENDING_REVIEW: brandColors.warning,
-  APPROVED: brandColors.success,
-  DISABLED: brandColors.body,
+  NORMAL: brandColors.success,
+  PENDING_RENEWAL: brandColors.warning,
+  PENDING_REVIEW: brandColors.body,
+};
+
+const CERTIFICATE_STATUS_COLOR: Record<AgentInfoSummary['certificateStatus'], string> = {
+  NONE: brandColors.body,
+  PENDING: brandColors.warning,
+  GENERATING: brandColors.warning,
+  SUCCESS: brandColors.success,
+  FAILED: 'error',
 };
 
 /** 格式化为 YYYY-MM-DD，无值时显示占位符 */
@@ -74,8 +87,16 @@ export function ClientListPage() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ClientListItem[]>([]);
   const [detailClientId, setDetailClientId] = useState<string | null>(null);
+  const [agentInfoDetailTarget, setAgentInfoDetailTarget] = useState<{
+    clientId: string;
+    agentInfoId: string;
+  } | null>(null);
   const [certificateTarget, setCertificateTarget] = useState<CertificateTarget | null>(null);
+  const [certificateRecords, setCertificateRecords] = useState<CertificateRecord[]>([]);
+  const [certificateLoading, setCertificateLoading] = useState(false);
   const [generatingAgentInfoId, setGeneratingAgentInfoId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -83,6 +104,7 @@ export function ClientListPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   // 已提交的筛选条件：仅在点击"查询"按钮（表单 onFinish）时更新，翻页/切页大小时复用
   const [filters, setFilters] = useState<Omit<ListClientsParams, 'page' | 'pageSize'>>({});
 
@@ -110,25 +132,90 @@ export function ClientListPage() {
     [page, pageSize, filters],
   );
 
-  const handleGenerateCertificate = useCallback(async (agentInfoId: string) => {
-    setGeneratingAgentInfoId(agentInfoId);
+  const handleGenerateCertificate = useCallback(
+    async (agentInfoId: string) => {
+      setGeneratingAgentInfoId(agentInfoId);
+      try {
+        await clientsApi.generateCertificate(agentInfoId);
+        void message.success('已提交生成任务，请稍候查看状态');
+        void load();
+      } catch {
+        void message.error('提交生成任务失败');
+      } finally {
+        setGeneratingAgentInfoId(null);
+      }
+    },
+    [load],
+  );
+
+  const handleDownloadTemplate = useCallback(async () => {
+    setDownloadingTemplate(true);
     try {
-      const { blob, fileName } = await clientsApi.generateCertificate(agentInfoId);
+      const { blob, fileName } = await clientImportApi.downloadTemplate();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = fileName ?? `${agentInfoId}.pdf`;
+      a.download = fileName ?? '授权客户批量导入模板.xlsx';
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      void message.success('证书生成成功');
     } catch {
-      void message.error('证书生成失败');
+      void message.error('模板下载失败，请重试');
     } finally {
-      setGeneratingAgentInfoId(null);
+      setDownloadingTemplate(false);
     }
   }, []);
+
+  const handleDownloadCertificate = useCallback(async (certificateId: string) => {
+    setDownloadingId(certificateId);
+    try {
+      const { blob, fileName } = await clientsApi.downloadCertificate(certificateId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName ?? `${certificateId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      void message.error('下载失败，请重试');
+    } finally {
+      setDownloadingId(null);
+    }
+  }, []);
+
+  /** 在线预览：借助浏览器内置 PDF 阅读器在新标签页打开，不触发下载。 */
+  const handlePreviewCertificate = useCallback(async (certificateId: string) => {
+    setPreviewingId(certificateId);
+    try {
+      const { blob } = await clientsApi.downloadCertificate(certificateId);
+      const pdfBlob =
+        blob.type === 'application/pdf' ? blob : blob.slice(0, blob.size, 'application/pdf');
+      const url = URL.createObjectURL(pdfBlob);
+      window.open(url, '_blank');
+      // 交给新标签页加载后再释放，避免过早回收导致预览失败
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      void message.error('预览失败，请重试');
+    } finally {
+      setPreviewingId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!certificateTarget) {
+      setCertificateRecords([]);
+      return;
+    }
+    setCertificateLoading(true);
+    clientsApi
+      .listCertificates(certificateTarget.agentInfo.id)
+      .then(setCertificateRecords)
+      .catch(() => void message.error('证书历史加载失败'))
+      .finally(() => setCertificateLoading(false));
+  }, [certificateTarget]);
 
   useEffect(() => {
     void load({ page: 1 });
@@ -200,7 +287,8 @@ export function ClientListPage() {
               />
             </Form.Item>
             <Form.Item name="submittedRange" label="提交日期" style={{ marginBottom: 0 }}>
-              <RangePicker />
+              {/* 允许只选其中一端：只选开始日期表示查到最新，只选结束日期表示从最早查起 */}
+              <RangePicker allowEmpty={[true, true]} />
             </Form.Item>
           </Space>
 
@@ -238,6 +326,9 @@ export function ClientListPage() {
             </Space>
 
             <Space>
+              <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
+                刷新
+              </Button>
               <Button icon={<UploadOutlined />} onClick={() => setImportModalOpen(true)}>
                 批量导入
               </Button>
@@ -260,26 +351,44 @@ export function ClientListPage() {
           setImportModalOpen(false);
           setImportFile(null);
         }}
-        onOk={async () => {
-          if (!importFile) {
-            void message.warning('请先选择要上传的 ZIP 文件');
-            return;
-          }
-          setImporting(true);
-          try {
-            const job = await clientImportApi.create(importFile);
-            setImportModalOpen(false);
-            setImportFile(null);
-            navigate(`/clients/import/${job.id}`);
-          } catch {
-            void message.error('上传失败，请重试');
-          } finally {
-            setImporting(false);
-          }
-        }}
-        okText="开始导入"
-        okButtonProps={{ loading: importing, disabled: !importFile }}
         destroyOnClose
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button
+              type="link"
+              size="small"
+              icon={<DownloadOutlined />}
+              loading={downloadingTemplate}
+              onClick={handleDownloadTemplate}
+            >
+              下载批量导入模板
+            </Button>
+            <Button
+              type="primary"
+              loading={importing}
+              disabled={!importFile}
+              onClick={async () => {
+                if (!importFile) {
+                  void message.warning('请先选择要上传的 ZIP 文件');
+                  return;
+                }
+                setImporting(true);
+                try {
+                  const job = await clientImportApi.create(importFile);
+                  setImportModalOpen(false);
+                  setImportFile(null);
+                  navigate(`/clients/import/${job.id}`);
+                } catch {
+                  void message.error('上传失败，请重试');
+                } finally {
+                  setImporting(false);
+                }
+              }}
+            >
+              开始导入
+            </Button>
+          </div>
+        }
       >
         <Upload.Dragger
           accept=".zip"
@@ -317,49 +426,46 @@ export function ClientListPage() {
               // 企业客户：客户中文名取公司中文名；个人客户没有"公司"概念，取法人姓名（中文）代替
               title: '客户名称（中文）',
               dataIndex: 'nameCn',
-              fixed: 'left',
-              width: 180,
+              minWidth: 160,
               render: (_, r) => r.nameCn ?? '—',
             },
             {
               // 个人客户没有英文名，取法人姓名拼音代替
               title: '客户名称（英文）',
               dataIndex: 'nameEn',
-              fixed: 'left',
-              width: 180,
+              minWidth: 160,
               render: (_, r) => r.nameEn ?? '—',
             },
             {
               title: '注册类型',
               dataIndex: 'clientType',
-              width: 100,
+              minWidth: 100,
               render: (v: ClientType) => CLIENT_TYPE_LABELS[v],
             },
             {
               title: '提交日期',
               dataIndex: 'createdAt',
-              width: 120,
+              minWidth: 110,
               render: (v: string) => formatDate(v),
             },
             {
               title: '状态',
               dataIndex: 'status',
-              width: 110,
+              minWidth: 100,
               render: (v: ClientStatus) => (
                 <Tag color={STATUS_COLOR[v]}>{CLIENT_STATUS_LABELS[v]}</Tag>
               ),
             },
-            {
-              title: '代理信息',
-              dataIndex: 'agentInfos',
-              width: 100,
-              render: (v: AgentInfoSummary[]) => (v.length > 0 ? `${v.length} 条` : '—'),
-            },
+            // {
+            //   title: '代理信息',
+            //   dataIndex: 'agentInfos',
+            //   width: 100,
+            //   render: (v: AgentInfoSummary[]) => (v.length > 0 ? `${v.length} 条` : '—'),
+            // },
             {
               title: '操作',
               key: 'action',
-              fixed: 'right',
-              width: 120,
+              minWidth: 110,
               render: (_, r) => (
                 <Button
                   type="link"
@@ -367,7 +473,7 @@ export function ClientListPage() {
                   icon={<EyeOutlined />}
                   onClick={() => setDetailClientId(r.id)}
                 >
-                  查看资料
+                  详情
                 </Button>
               ),
             },
@@ -377,91 +483,191 @@ export function ClientListPage() {
             expandedRowKeys,
             onExpandedRowsChange: (keys) => setExpandedRowKeys(keys as string[]),
             expandedRowRender: (r) => (
-              <Table<AgentInfoSummary>
-                rowKey="id"
-                size="small"
-                pagination={false}
-                dataSource={r.agentInfos}
-                columns={[
-                  {
-                    title: '代理国家',
-                    dataIndex: 'country',
-                    width: 100,
-                    render: (v: AgentInfoSummary['country']) => AGENT_COUNTRY_LABELS[v],
-                  },
-                  {
-                    title: '代理公司',
-                    dataIndex: 'agentCompany',
-                    width: 220,
-                    render: (v: AgentInfoSummary['agentCompany']) => AGENT_COMPANY_LABELS[v],
-                  },
-                  {
-                    title: '生效日期',
-                    dataIndex: 'expectedEffectiveDate',
-                    width: 120,
-                    render: (v: string) => formatDate(v),
-                  },
-                  {
-                    title: '服务截止日期',
-                    dataIndex: 'expiresAt',
-                    width: 130,
-                    render: (v: string) => formatDate(v),
-                  },
-                  { title: '店铺数', dataIndex: 'shopCount', width: 90, align: 'center' },
-                  {
-                    title: '操作',
-                    key: 'action',
-                    width: 200,
-                    render: (_, agentInfo) => (
-                      <Space size={0}>
-                        <Button
-                          type="link"
-                          size="small"
-                          icon={<FileProtectOutlined />}
-                          onClick={() =>
-                            setCertificateTarget({
-                              clientName: r.nameCn ?? r.nameEn ?? '',
-                              agentInfo,
-                            })
-                          }
-                        >
-                          查看证书
-                        </Button>
-                        <Button
-                          type="link"
-                          size="small"
-                          icon={<FilePdfOutlined />}
-                          loading={generatingAgentInfoId === agentInfo.id}
-                          onClick={() => void handleGenerateCertificate(agentInfo.id)}
-                        >
-                          生成证书
-                        </Button>
-                      </Space>
-                    ),
-                  },
-                ]}
-              />
+              <div className="client-agent-subtable-wrap">
+                <Table<AgentInfoSummary>
+                  className="client-agent-subtable"
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  tableLayout="auto"
+                  dataSource={r.agentInfos}
+                  columns={[
+                    {
+                      title: '代理国家',
+                      dataIndex: 'country',
+                      minWidth: 90,
+                      render: (v: AgentInfoSummary['country']) => AGENT_COUNTRY_LABELS[v],
+                    },
+                    {
+                      title: '代理公司',
+                      dataIndex: 'agentCompany',
+                      minWidth: 180,
+                      render: (v: AgentInfoSummary['agentCompany']) => AGENT_COMPANY_LABELS[v],
+                    },
+                    {
+                      title: '生效日期',
+                      dataIndex: 'expectedEffectiveDate',
+                      minWidth: 110,
+                      render: (v: string) => formatDate(v),
+                    },
+                    {
+                      title: '服务截止日期',
+                      dataIndex: 'expiresAt',
+                      minWidth: 120,
+                      render: (v: string) => formatDate(v),
+                    },
+                    // { title: '店铺数', dataIndex: 'shopCount', width: 80, align: 'center' },
+                    {
+                      title: '证书状态',
+                      dataIndex: 'certificateStatus',
+                      minWidth: 100,
+                      render: (_, agentInfo) => {
+                        const status = agentInfo.certificateStatus;
+                        const tag = (
+                          <Tag color={CERTIFICATE_STATUS_COLOR[status]}>
+                            {CERTIFICATE_STATUS_LABELS[status]}
+                          </Tag>
+                        );
+                        return status === 'FAILED' && agentInfo.certificateError ? (
+                          <Tooltip title={agentInfo.certificateError}>{tag}</Tooltip>
+                        ) : (
+                          tag
+                        );
+                      },
+                    },
+                    {
+                      title: '操作',
+                      key: 'action',
+                      width: 260,
+                      render: (_, agentInfo) => {
+                        const isBusy =
+                          agentInfo.certificateStatus === 'PENDING' ||
+                          agentInfo.certificateStatus === 'GENERATING';
+                        const generateBtn = (
+                          <Button
+                            type="link"
+                            size="small"
+                            icon={<FilePdfOutlined />}
+                            disabled={isBusy}
+                            loading={generatingAgentInfoId === agentInfo.id}
+                            onClick={() => void handleGenerateCertificate(agentInfo.id)}
+                          >
+                            {agentInfo.certificateStatus === 'FAILED'
+                              ? '重试生成'
+                              : agentInfo.certificateStatus === 'SUCCESS'
+                                ? '重新生成'
+                                : '生成证书'}
+                          </Button>
+                        );
+                        return (
+                          <Space size={0}>
+                            <Button
+                              type="link"
+                              size="small"
+                              icon={<EyeOutlined />}
+                              onClick={() =>
+                                setAgentInfoDetailTarget({
+                                  clientId: r.id,
+                                  agentInfoId: agentInfo.id,
+                                })
+                              }
+                            >
+                              详情
+                            </Button>
+                            <Button
+                              type="link"
+                              size="small"
+                              icon={<FileProtectOutlined />}
+                              onClick={() =>
+                                setCertificateTarget({
+                                  clientName: r.nameCn ?? r.nameEn ?? '',
+                                  agentInfo,
+                                })
+                              }
+                            >
+                              查看证书
+                            </Button>
+                            {isBusy ? (
+                              <Tooltip title="证书生成中，请稍候">
+                                <span>{generateBtn}</span>
+                              </Tooltip>
+                            ) : (
+                              generateBtn
+                            )}
+                          </Space>
+                        );
+                      },
+                    },
+                  ]}
+                />
+              </div>
             ),
           }}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 'max-content' }}
+          tableLayout="auto"
         />
       </Card>
 
       <ClientDetailDrawer clientId={detailClientId} onClose={() => setDetailClientId(null)} />
 
+      <AgentInfoDetailDrawer
+        target={agentInfoDetailTarget}
+        onClose={() => setAgentInfoDetailTarget(null)}
+      />
+
       <Modal
         open={!!certificateTarget}
         title={
           certificateTarget
-            ? `授权证书 · ${certificateTarget.clientName} · ${AGENT_COUNTRY_LABELS[certificateTarget.agentInfo.country]}`
-            : '授权证书'
+            ? `${AGENT_COUNTRY_LABELS[certificateTarget.agentInfo.country]}代理证书 · ${certificateTarget.clientName}`
+            : '代理证书'
         }
         footer={null}
         onCancel={() => setCertificateTarget(null)}
       >
-        <Tooltip title="证书生成/归档功能尚未上线，敬请期待">
-          <Empty description="暂无可查看的授权证书" />
-        </Tooltip>
+        {certificateRecords.length === 0 ? (
+          <Empty description={certificateLoading ? '加载中…' : '暂无已生成的授权证书'} />
+        ) : (
+          <Table<CertificateRecord>
+            rowKey="id"
+            size="small"
+            loading={certificateLoading}
+            pagination={false}
+            dataSource={certificateRecords}
+            columns={[
+              { title: '协议编号', dataIndex: 'agreementNumber' },
+              {
+                title: '生成时间',
+                dataIndex: 'createdAt',
+                render: (v: string) => formatDate(v),
+              },
+              {
+                title: '操作',
+                key: 'action',
+                render: (_, record) => (
+                  <Space size={0}>
+                    <Button
+                      type="link"
+                      size="small"
+                      loading={previewingId === record.id}
+                      onClick={() => void handlePreviewCertificate(record.id)}
+                    >
+                      预览
+                    </Button>
+                    <Button
+                      type="link"
+                      size="small"
+                      loading={downloadingId === record.id}
+                      onClick={() => void handleDownloadCertificate(record.id)}
+                    >
+                      下载
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        )}
       </Modal>
     </div>
   );

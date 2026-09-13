@@ -75,9 +75,9 @@ enum ClientType {
 }
 
 enum ClientStatus {
-  PENDING_REVIEW // 审核中
-  APPROVED // 已通过
-  DISABLED // 已禁用
+  NORMAL // 正常
+  PENDING_RENEWAL // 待续费
+  PENDING_REVIEW // 待审核
   // 后续新增状态直接加枚举值 + migration，扩展方式同 Role
 }
 
@@ -107,6 +107,7 @@ enum AgentCompany {
   EU_CONSULTEN_SRLS // 欧盟 - EU Consulten Srls
   OVERSEA_WALKERS_US // 美国 - Oversea Walkers LLC
   OVERSEA_WALKERS_TR // 土耳其 - OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi
+  OVERSEA_WALKERS_CA // 加拿大 - Oversea Walkers
 }
 
 enum AttachmentType {
@@ -124,6 +125,10 @@ model Client {
   email      String?
   remark     String?      @db.Text
   status     ClientStatus @default(PENDING_REVIEW)
+  // 客户唯一标识：公司类型存统一社会信用代码，个人类型存身份证号。
+  // 提交时与 CompanyInfo.creditCode（仅公司必填）/ LegalRepresentative.idNumber（仅个人必填）保持一致，
+  // 但查重/唯一性统一收口在这一列，不再依赖按 clientType 分支去 join 两张子表。
+  uniqueIdentifier String @unique
 
   ownerId String // 负责该客户的内部员工
   owner   User   @relation("ClientOwner", fields: [ownerId], references: [id])
@@ -164,11 +169,12 @@ model ClientTracker {
   @@index([userId])
 }
 
-// 公司/个人主体信息（个人：creditCode 存身份证号）
+// 公司主体信息（仅公司类型客户拥有该记录内容；个人类型客户唯一标识见 Client.uniqueIdentifier）
 model CompanyInfo {
   id         String  @id @default(uuid())
   clientId   String  @unique
-  creditCode String // 统一信用代码 或 个人身份证号
+  // 统一社会信用代码，仅公司类型客户必填；与 Client.uniqueIdentifier 保持一致
+  creditCode String?
   nameCn     String?
   nameEn     String?
   addressCn  String? @db.Text
@@ -179,7 +185,6 @@ model CompanyInfo {
   contactPerson String? // 联系人，仅公司类型客户必填
   client     Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  @@index([creditCode])
   @@index([nameEn])
 }
 
@@ -198,18 +203,29 @@ model LegalRepresentative {
   @@index([idNumber])
 }
 
+// 代理证书后台自动生成状态机，见 docs/certificate-generation-design.md 异步生成方案
+enum CertificateStatus {
+  NONE // 尚未触发生成
+  PENDING // 已入队，等待 Worker 处理
+  GENERATING // Worker 正在生成
+  SUCCESS // 生成成功，对应 Certificate 表最新一行
+  FAILED // 生成失败，原因见 certificateError
+}
+
 // 代理信息（1:N 归属客户；1:N 关联店铺，一份代理协议可覆盖多个店铺）
 model AgentInfo {
-  id                    String       @id @default(uuid())
+  id                    String            @id @default(uuid())
   clientId              String
   country               AgentCountry
   expectedEffectiveDate DateTime
   agentYears            Int
   expiresAt             DateTime // = expectedEffectiveDate + agentYears，写入时后端计算
   agentCompany          AgentCompany
-  client                Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client                Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
   shops                 Shop[]
   certificates          Certificate[]
+  certificateStatus     CertificateStatus @default(NONE)
+  certificateError      String?           @db.Text
 
   createdAt DateTime @default(now())
 
@@ -246,11 +262,11 @@ model Product {
   shopId        String
   clientId      String
   platform      Platform
-  productNameCn String
-  productNameEn String
-  category      String
-  asinOrSku     String // ASIN码/商品ID
-  productUrl    String   @db.Text
+  productNameCn String?
+  productNameEn String?
+  category      String?
+  asinOrSku     String? // ASIN码/商品ID
+  productUrl    String?  @db.Text
   hasBattery    Boolean  @default(false)
   shop          Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
 
@@ -261,7 +277,8 @@ model Product {
   @@index([asinOrSku])
 }
 
-// 附件（预留接入入口，暂不接上传逻辑）
+// 附件：每个客户每种证件类型只保留最新一份（建档/追加代理信息重新上传时覆盖旧记录），
+// 见 ClientsService.saveAttachments 的 upsert 实现。
 model Attachment {
   id       String         @id @default(uuid())
   clientId String
@@ -271,6 +288,7 @@ model Attachment {
 
   createdAt DateTime @default(now())
 
+  @@unique([clientId, type])
   @@index([clientId])
   @@index([type])
 }

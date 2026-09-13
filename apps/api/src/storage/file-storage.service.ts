@@ -29,4 +29,6 @@ export interface FileStorageService {
   save(params: SaveFileParams): Promise<SaveFileResult>;
   /** 供鉴权下载接口按 `fileUrl` 读取原始文件内容 */
   read(fileUrl: string): Promise<ReadFileResult>;
+  /** 覆盖上传（如重新上传营业执照）后清理旧文件，删除失败只记 warning，不阻断主流程 */
+  delete(fileUrl: string): Promise<void>;
 }

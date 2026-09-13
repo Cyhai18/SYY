@@ -1,10 +1,25 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Col, Form, Input, List, Modal, Row, Select, Upload, message } from 'antd';
-import { InboxOutlined, PlusOutlined } from '@ant-design/icons';
-import { CLIENT_TYPE_LABELS, type ClientPayload, type ClientType } from '@funtax/shared';
+import { Alert, Button, Card, Col, Form, Input, List, Modal, Row, Select, message } from 'antd';
+import { DeleteOutlined } from '@ant-design/icons';
+import {
+  AGENT_COUNTRY_LABELS,
+  CLIENT_TYPE_LABELS,
+  type AgentCountry,
+  type ClientPayload,
+  type ClientType,
+} from '@funtax/shared';
 import { nextKey, type AgentInfoDraft } from '../../../store/client-wizard-store';
 import { clientImportApi, type ImportItem } from '../../../lib/client-import-api';
 import { AgentInfoEditor } from '../steps/AgentInfoEditor';
+
+/** 代理国家 -> 国旗 emoji，与 StepShops 保持一致，代理信息卡片标题用。 */
+const AGENT_COUNTRY_FLAGS: Record<AgentCountry, string> = {
+  GB: '🇬🇧',
+  EU: '🇪🇺',
+  US: '🇺🇸',
+  TR: '🇹🇷',
+  CA: '🇨🇦',
+};
 
 /** 把后端 reviewFields 快照（无本地 key）转成可编辑草稿（补上本地 key）。 */
 function toAgentInfoDrafts(raw: unknown): AgentInfoDraft[] {
@@ -42,9 +57,6 @@ export function ReviewItemModal({
   const [companyInfo, setCompanyInfo] = useState<Record<string, unknown>>({});
   const [legalRepInfo, setLegalRepInfo] = useState<Record<string, unknown>>({});
   const [agentInfos, setAgentInfos] = useState<AgentInfoDraft[]>([]);
-  const [businessLicenseFile, setBusinessLicenseFile] = useState<File | null>(null);
-  const [idCardFrontFile, setIdCardFrontFile] = useState<File | null>(null);
-  const [idCardBackFile, setIdCardBackFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -56,33 +68,29 @@ export function ReviewItemModal({
     setCompanyInfo((fields.companyInfo as Record<string, unknown>) ?? {});
     setLegalRepInfo((fields.legalRepInfo as Record<string, unknown>) ?? {});
     setAgentInfos(toAgentInfoDrafts(fields.agentInfos));
-    setBusinessLicenseFile(null);
-    setIdCardFrontFile(null);
-    setIdCardBackFile(null);
   }, [item, open]);
 
   if (!item) return null;
 
-  const addAgentInfo = () =>
-    setAgentInfos([
-      ...agentInfos,
-      {
-        key: nextKey(),
-        country: 'GB',
-        expectedEffectiveDate: '',
-        agentYears: 1,
-        agentCompany: 'OVERSEA_WALKERS_GB',
-        shops: [],
-      },
-    ]);
-
   const handleSubmit = async () => {
+    // 客户唯一标识：公司取统一信用代码，个人取身份证号，落在 Client.uniqueIdentifier
+    const uniqueIdentifier =
+      clientType === 'COMPANY'
+        ? ((companyInfo.creditCode as string | undefined) ?? '')
+        : ((legalRepInfo.idNumber as string | undefined) ?? '');
     const payload: ClientPayload = {
       clientType,
       phone,
       email,
-      companyInfo: companyInfo as unknown as ClientPayload['companyInfo'],
-      legalRepInfo: legalRepInfo as unknown as ClientPayload['legalRepInfo'],
+      uniqueIdentifier,
+      // 与后端 row-validator.service.ts 保持一致：公司信息/法人信息只在对应注册类型下才提交，
+      // 否则另一侧即使是空对象 `{}`，也会被 class-validator 当作"存在但字段缺失"而报必填错误。
+      companyInfo: (clientType === 'COMPANY'
+        ? companyInfo
+        : undefined) as unknown as ClientPayload['companyInfo'],
+      legalRepInfo: (clientType === 'INDIVIDUAL'
+        ? legalRepInfo
+        : undefined) as unknown as ClientPayload['legalRepInfo'],
       agentInfos: agentInfos.map(({ key, shops, ...rest }) => ({
         ...rest,
         shops: shops.map(({ key: shopKey, products, ...shopRest }) => ({
@@ -94,11 +102,7 @@ export function ReviewItemModal({
 
     setSubmitting(true);
     try {
-      await clientImportApi.reviewItem(item.id, payload, {
-        businessLicenseFile,
-        idCardFrontFile,
-        idCardBackFile,
-      });
+      await clientImportApi.reviewItem(item.id, payload);
       void message.success('核对提交成功，客户已创建');
       onSuccess();
     } catch (err) {
@@ -145,13 +149,13 @@ export function ReviewItemModal({
         />
       ) : null}
 
-      <Form layout="vertical">
+      <Form layout="vertical" style={{ marginBottom: 16 }}>
         <Row gutter={16}>
           <Col span={6}>
             <Form.Item label="注册类型" required>
               <Select
                 value={clientType}
-                onChange={setClientType}
+                disabled
                 options={Object.entries(CLIENT_TYPE_LABELS).map(([value, label]) => ({
                   value,
                   label,
@@ -159,133 +163,265 @@ export function ReviewItemModal({
               />
             </Form.Item>
           </Col>
-          <Col span={9}>
-            <Form.Item label="联系手机号" required>
-              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
-            </Form.Item>
-          </Col>
-          <Col span={9}>
-            <Form.Item label="邮箱">
-              <Input value={email} onChange={(e) => setEmail(e.target.value)} />
-            </Form.Item>
-          </Col>
         </Row>
       </Form>
 
+      {/* 与新建客户向导保持一致：注册类型二选一决定展示"公司信息"或"个人信息"，二者互斥、不同时出现 */}
       {clientType === 'COMPANY' ? (
-        <Form layout="vertical" style={{ marginBottom: 16 }}>
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item label="统一信用代码" required>
-                <Input
-                  value={companyInfo.creditCode as string}
-                  onChange={(e) => setCompanyInfo({ ...companyInfo, creditCode: e.target.value })}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="公司中文名">
-                <Input
-                  value={companyInfo.nameCn as string}
-                  onChange={(e) => setCompanyInfo({ ...companyInfo, nameCn: e.target.value })}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="公司英文名">
-                <Input
-                  value={companyInfo.nameEn as string}
-                  onChange={(e) => setCompanyInfo({ ...companyInfo, nameEn: e.target.value })}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={24}>
-              <Upload.Dragger
-                accept=".jpg,.jpeg,.png,.pdf"
-                maxCount={1}
-                showUploadList
-                beforeUpload={(file) => {
-                  setBusinessLicenseFile(file);
-                  return false;
-                }}
-              >
-                <p className="ant-upload-drag-icon">
-                  <InboxOutlined />
-                </p>
-                <p className="ant-upload-text">重新上传营业执照（可选，不上传则保留原字段）</p>
-              </Upload.Dragger>
-            </Col>
-          </Row>
-        </Form>
-      ) : null}
-
-      <Form layout="vertical" style={{ marginBottom: 16 }}>
-        <Row gutter={16}>
-          <Col span={8}>
-            <Form.Item label="姓名（中文）" required>
-              <Input
-                value={legalRepInfo.nameCn as string}
-                onChange={(e) => setLegalRepInfo({ ...legalRepInfo, nameCn: e.target.value })}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item label="姓名（拼音）" required>
-              <Input
-                value={legalRepInfo.namePinyin as string}
-                onChange={(e) => setLegalRepInfo({ ...legalRepInfo, namePinyin: e.target.value })}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item label="身份证号" required>
-              <Input
-                value={legalRepInfo.idNumber as string}
-                onChange={(e) => setLegalRepInfo({ ...legalRepInfo, idNumber: e.target.value })}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Upload.Dragger
-              accept=".jpg,.jpeg,.png"
-              maxCount={1}
-              beforeUpload={(file) => {
-                setIdCardFrontFile(file);
-                return false;
-              }}
+        <>
+          <Form layout="vertical">
+            <Card
+              className="form-card form-card--legal"
+              variant="borderless"
+              title="公司信息"
+              style={{ marginBottom: 16 }}
             >
-              <p className="ant-upload-text">重新上传身份证正面（可选）</p>
-            </Upload.Dragger>
-          </Col>
-          <Col span={12}>
-            <Upload.Dragger
-              accept=".jpg,.jpeg,.png"
-              maxCount={1}
-              beforeUpload={(file) => {
-                setIdCardBackFile(file);
-                return false;
-              }}
-            >
-              <p className="ant-upload-text">重新上传身份证反面（可选）</p>
-            </Upload.Dragger>
-          </Col>
-        </Row>
-      </Form>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item label="统一社会信用代码" required>
+                    <Input
+                      value={companyInfo.creditCode as string}
+                      onChange={(e) =>
+                        setCompanyInfo({ ...companyInfo, creditCode: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="公司中文名" required>
+                    <Input
+                      value={companyInfo.nameCn as string}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, nameCn: e.target.value })}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="公司英文名" required>
+                    <Input
+                      value={companyInfo.nameEn as string}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, nameEn: e.target.value })}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="邮编" required>
+                    <Input
+                      value={companyInfo.postalCode as string}
+                      onChange={(e) =>
+                        setCompanyInfo({ ...companyInfo, postalCode: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="公司中文地址" required>
+                    <Input.TextArea
+                      autoSize={{ minRows: 1, maxRows: 2 }}
+                      value={companyInfo.addressCn as string}
+                      onChange={(e) =>
+                        setCompanyInfo({ ...companyInfo, addressCn: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="公司英文地址" required>
+                    <Input.TextArea
+                      autoSize={{ minRows: 1, maxRows: 2 }}
+                      value={companyInfo.addressEn as string}
+                      onChange={(e) =>
+                        setCompanyInfo({ ...companyInfo, addressEn: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="公司所在省份（英文）">
+                    <Input
+                      value={companyInfo.provinceEn as string}
+                      onChange={(e) =>
+                        setCompanyInfo({ ...companyInfo, provinceEn: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="公司所在城市（英文）">
+                    <Input
+                      value={companyInfo.cityEn as string}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, cityEn: e.target.value })}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
 
-      {agentInfos.map((agentInfo, index) => (
-        <div key={agentInfo.key} style={{ marginBottom: 16 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>{`代理信息 ${index + 1}`}</div>
-          <AgentInfoEditor
-            agentInfo={agentInfo}
-            onChange={(next) =>
-              setAgentInfos(agentInfos.map((a) => (a.key === agentInfo.key ? next : a)))
+            <Card
+              className="form-card form-card--contact"
+              variant="borderless"
+              title="联系方式"
+              style={{ marginBottom: 16 }}
+            >
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item label="联系人" required>
+                    <Input
+                      value={companyInfo.contactPerson as string}
+                      onChange={(e) =>
+                        setCompanyInfo({ ...companyInfo, contactPerson: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="联系电话" required>
+                    <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="联系邮箱" required>
+                    <Input value={email} onChange={(e) => setEmail(e.target.value)} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+          </Form>
+        </>
+      ) : (
+        <>
+          <Form layout="vertical">
+            <Card
+              className="form-card form-card--legal"
+              variant="borderless"
+              title="个人信息"
+              style={{ marginBottom: 16 }}
+            >
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item label="身份证号" required>
+                    <Input
+                      value={legalRepInfo.idNumber as string}
+                      onChange={(e) =>
+                        setLegalRepInfo({ ...legalRepInfo, idNumber: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="姓名（中文）" required>
+                    <Input
+                      value={legalRepInfo.nameCn as string}
+                      onChange={(e) => setLegalRepInfo({ ...legalRepInfo, nameCn: e.target.value })}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="姓名（拼音）" required>
+                    <Input
+                      value={legalRepInfo.namePinyin as string}
+                      onChange={(e) =>
+                        setLegalRepInfo({ ...legalRepInfo, namePinyin: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="邮编" required>
+                    <Input
+                      value={legalRepInfo.idPostalCode as string}
+                      onChange={(e) =>
+                        setLegalRepInfo({ ...legalRepInfo, idPostalCode: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="身份证地址（中文）" required>
+                    <Input.TextArea
+                      autoSize={{ minRows: 1, maxRows: 2 }}
+                      value={legalRepInfo.idAddressCn as string}
+                      onChange={(e) =>
+                        setLegalRepInfo({ ...legalRepInfo, idAddressCn: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="身份证地址（英文）" required>
+                    <Input.TextArea
+                      autoSize={{ minRows: 1, maxRows: 2 }}
+                      value={legalRepInfo.idAddressEn as string}
+                      onChange={(e) =>
+                        setLegalRepInfo({ ...legalRepInfo, idAddressEn: e.target.value })
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+
+            <Card
+              className="form-card form-card--contact"
+              variant="borderless"
+              title="联系方式"
+              style={{ marginBottom: 16 }}
+            >
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item label="联系电话" required>
+                    <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="联系邮箱" required>
+                    <Input value={email} onChange={(e) => setEmail(e.target.value)} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+          </Form>
+        </>
+      )}
+
+      {/* 代理信息：卡片样式与新建客户向导的 StepShops 保持一致（国旗 + 国家名标题、右上角删除） */}
+      <div className="agent-info-grid">
+        {agentInfos.map((agentInfo, index) => (
+          <Card
+            key={agentInfo.key}
+            className="agent-card"
+            variant="borderless"
+            style={{ marginBottom: 16 }}
+            title={
+              <span className="section-title section-title--agent">
+                {agentInfo.country ? (
+                  <span className="section-title__flag">
+                    {AGENT_COUNTRY_FLAGS[agentInfo.country]}
+                  </span>
+                ) : null}
+                {agentInfo.country
+                  ? `${AGENT_COUNTRY_LABELS[agentInfo.country]}代理`
+                  : `代理信息 ${index + 1}`}
+              </span>
             }
-          />
-        </div>
-      ))}
-      <Button type="dashed" block icon={<PlusOutlined />} onClick={addAgentInfo}>
-        新增代理信息
-      </Button>
+            extra={
+              <Button
+                type="text"
+                danger
+                size="small"
+                icon={<DeleteOutlined />}
+                onClick={() => setAgentInfos(agentInfos.filter((a) => a.key !== agentInfo.key))}
+              />
+            }
+          >
+            <AgentInfoEditor
+              agentInfo={agentInfo}
+              onChange={(next) =>
+                setAgentInfos(agentInfos.map((a) => (a.key === agentInfo.key ? next : a)))
+              }
+            />
+          </Card>
+        ))}
+      </div>
     </Modal>
   );
 }

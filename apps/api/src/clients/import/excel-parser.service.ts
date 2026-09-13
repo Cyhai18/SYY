@@ -19,18 +19,18 @@ const COL = {
   idCardBackImage: 4, // *身份证反面图片
   phone: 5, // *联系电话
   email: 6, // 联系邮箱
-  remark: 7, // 备注
-  agentCountry: 8, // *代理国家
-  agentCompany: 9, // *代理公司
-  expectedEffectiveDate: 10, // *期望生效日期
-  agentYears: 11, // *代理年限
-  shopPlatform: 12, // *平台
-  shopId: 13, // 平台店铺ID
-  shopName: 14, // *店铺名称
+  contactPerson: 7, // 联系人（企业类型必填，个人类型选填）
+  remark: 8, // 备注
+  agentCountry: 9, // *代理国家
+  agentCompany: 10, // *代理公司
+  expectedEffectiveDate: 11, // *期望生效日期
+  agentYears: 12, // *代理年限
+  shopPlatform: 13, // *店铺所在平台
+  shopName: 14, // *店铺名
   shopUrl: 15, // *店铺链接
   brandNames: 16, // *品牌名称
   mainCategoryEn: 17, // *主营产品类目（英文）
-  productPlatform: 18, // 销售平台
+  shopId: 18, // 店铺ID
   productNameCn: 19, // 产品中文名称
   productNameEn: 20, // 产品英文名称
   category: 21, // 产品所属类目
@@ -77,6 +77,8 @@ export interface ParsedExcelResult {
   clientType?: string;
   phone?: string;
   email?: string;
+  /** 联系人，仅企业类型客户必填，个人类型选填，见模板第 2 节第 7 列 */
+  contactPerson?: string;
   remark?: string;
   /** 该版本模板不再提供手填公司文字字段，恒为 {}，公司信息完全由 RowValidatorService 合并营业执照 OCR 结果得出 */
   companyInfo: {
@@ -164,6 +166,7 @@ export class ExcelParserService {
         result.clientType = cell(COL.clientType) || undefined;
         result.phone = cell(COL.phone) || undefined;
         result.email = cell(COL.email) || undefined;
+        result.contactPerson = cell(COL.contactPerson) || undefined;
         result.remark = cell(COL.remark) || undefined;
         firstRowRead = true;
       }
@@ -212,7 +215,8 @@ export class ExcelParserService {
         const asinOrSku = cell(COL.asinOrSku);
         if (productNameCn || asinOrSku) {
           shop.products.push({
-            platform: cell(COL.productPlatform) || undefined,
+            // 模板不再单独提供“销售平台”列，产品平台与页面向导一致，复用其所属店铺的平台
+            platform: shopPlatform || undefined,
             productNameCn: productNameCn || undefined,
             productNameEn: cell(COL.productNameEn) || undefined,
             category: cell(COL.category) || undefined,
@@ -240,6 +244,24 @@ export class ExcelParserService {
         result.images = fallback;
       } catch (err) {
         this.logger.debug(`图片兜底解析失败，忽略: ${String(err)}`);
+      }
+    }
+    // 以上两种方式都是"浮动锚点图"体系（xl/drawings/*），而 WPS「插入单元格图片」
+    // （单元格公式为 `_xlfn.DISPIMG("ID_xxx", 1)`）完全不走这套体系，图片信息记录在
+    // WPS 私有扩展 `xl/cellimages.xml` + `xl/_rels/cellimages.xml.rels` 里，前两种方式
+    // 对此完全无感知，恒为空。详见 docs/excel-embedded-image-formats.md 方案三。
+    // 同样仅在前两种方式都未找到图片时才触发，避免互相覆盖。
+    if (!result.images.businessLicense && !result.images.idCardFront && !result.images.idCardBack) {
+      try {
+        const fallback = this.extractCellImagesFallback(filePath, DATA_SHEET_NAME);
+        if (fallback.businessLicense || fallback.idCardFront || fallback.idCardBack) {
+          this.logger.warn(
+            '标准方式未解析到内嵌图片，已通过兜底方案（WPS 单元格图片 DISPIMG）找回，建议确认 Excel 导出工具是否规范',
+          );
+        }
+        result.images = fallback;
+      } catch (err) {
+        this.logger.debug(`单元格图片兜底解析失败，忽略: ${String(err)}`);
       }
     }
     return result;
@@ -370,6 +392,138 @@ export class ExcelParserService {
     }
     const images = this.assignImagesBySequentialOrder(candidates);
     return images;
+  }
+
+  /**
+   * 兜底方案三：解析 WPS「插入单元格图片」功能（公式 `_xlfn.DISPIMG("ID_xxx", 1)`），
+   * 图片作为公式结果直接是单元格内容，不经过 `xl/drawings/*` 锚点体系，因此前两种方式
+   * 都无法识别。定位方式：
+   * 1) 从 `xl/workbook.xml` + `xl/_rels/workbook.xml.rels` 找到目标 Sheet 对应的
+   *    worksheet XML 文件路径；
+   * 2) 在该 worksheet XML 里找出公式含 `_xlfn.DISPIMG("ID_xxx"` 的单元格，记录其
+   *    单元格引用（如 `B4`）与 ID 字符串；
+   * 3) 用 ID 去 `xl/cellimages.xml`（WPS 私有扩展，命名空间 `www.wps.cn`）里查
+   *    `<xdr:cNvPr name="ID_xxx">` 所在 `<etc:cellImage>` 的 `<a:blip r:embed="rIdN">`；
+   * 4) 用 `rIdN` 去 `xl/_rels/cellimages.xml.rels` 换算出真实媒体文件路径并读取二进制。
+   * 详见 docs/excel-embedded-image-formats.md 方案三。
+   */
+  private extractCellImagesFallback(
+    filePath: string,
+    sheetName: string,
+  ): ParsedExcelResult['images'] {
+    const zip = new AdmZip(filePath);
+    const entries = zip.getEntries();
+    const findEntry = (name: string) => entries.find((e) => e.entryName === name);
+
+    const workbookEntry = findEntry('xl/workbook.xml');
+    const workbookRelsEntry = findEntry('xl/_rels/workbook.xml.rels');
+    const cellImagesEntry = findEntry('xl/cellimages.xml');
+    const cellImagesRelsEntry = findEntry('xl/_rels/cellimages.xml.rels');
+    if (!workbookEntry || !workbookRelsEntry || !cellImagesEntry || !cellImagesRelsEntry) {
+      return {};
+    }
+
+    // 1) Sheet 名 -> r:id
+    const workbookXml = workbookEntry.getData().toString('utf-8');
+    const sheetRegex = /<sheet[^>]*name="([^"]+)"[^>]*r:id="(rId\d+)"[^>]*\/>/g;
+    let sheetMatch: RegExpExecArray | null;
+    let sheetRId: string | undefined;
+    while ((sheetMatch = sheetRegex.exec(workbookXml))) {
+      if (sheetMatch[1] === sheetName) {
+        sheetRId = sheetMatch[2];
+        break;
+      }
+    }
+    if (!sheetRId) {
+      return {};
+    }
+
+    // 2) r:id -> worksheet XML 路径
+    const workbookRelsXml = workbookRelsEntry.getData().toString('utf-8');
+    const relRegex = /<Relationship[^>]*Id="(rId\d+)"[^>]*Target="([^"]+)"/g;
+    let relMatch: RegExpExecArray | null;
+    let sheetTarget: string | undefined;
+    while ((relMatch = relRegex.exec(workbookRelsXml))) {
+      if (relMatch[1] === sheetRId) {
+        sheetTarget = relMatch[2];
+        break;
+      }
+    }
+    if (!sheetTarget) {
+      return {};
+    }
+    const sheetPath = path.posix.normalize(path.posix.join('xl', sheetTarget));
+    const sheetEntry = findEntry(sheetPath);
+    if (!sheetEntry) {
+      return {};
+    }
+
+    // 3) worksheet XML 里找 DISPIMG 公式所在单元格
+    const sheetXml = sheetEntry.getData().toString('utf-8');
+    const cellRegex = /<c r="([A-Z]+)(\d+)"[^>]*>([\s\S]*?)<\/c>/g;
+    let cellMatch: RegExpExecArray | null;
+    const idToCol = new Map<string, number>();
+    while ((cellMatch = cellRegex.exec(sheetXml))) {
+      const [, colLetters, , cellBody] = cellMatch;
+      // 单元格 XML 里的公式是转义后的文本（引号编码为 `&quot;`，如
+      // `<f>_xlfn.DISPIMG(&quot;ID_xxx&quot;,1)</f>`），而不是字面双引号，
+      // 因此需要同时兼容 `"` 和 `&quot;` 两种写法，否则正则永远匹配不到。
+      const dispimgMatch = /_xlfn\.DISPIMG\((?:&quot;|")(ID_[0-9A-Fa-f]+)(?:&quot;|")/.exec(
+        cellBody,
+      );
+      if (dispimgMatch) {
+        idToCol.set(dispimgMatch[1], this.columnLettersToIndex(colLetters));
+      }
+    }
+    if (idToCol.size === 0) {
+      return {};
+    }
+
+    // 4) ID -> rId（cellimages.xml），rId -> 媒体文件路径（cellimages.xml.rels）
+    const cellImagesXml = cellImagesEntry.getData().toString('utf-8');
+    const cellImageBlockRegex = /<etc:cellImage>([\s\S]*?)<\/etc:cellImage>/g;
+    const idToRId = new Map<string, string>();
+    let blockMatch: RegExpExecArray | null;
+    while ((blockMatch = cellImageBlockRegex.exec(cellImagesXml))) {
+      const block = blockMatch[1];
+      const nameMatch = /<xdr:cNvPr[^>]*name="(ID_[0-9A-Fa-f]+)"/.exec(block);
+      const embedMatch = /r:embed="(rId\d+)"/.exec(block);
+      if (nameMatch && embedMatch) {
+        idToRId.set(nameMatch[1], embedMatch[1]);
+      }
+    }
+
+    const cellImagesRelsXml = cellImagesRelsEntry.getData().toString('utf-8');
+    const ridToTarget = new Map<string, string>();
+    let cellImageRelMatch: RegExpExecArray | null;
+    const cellImageRelRegex = /<Relationship[^>]*Id="(rId\d+)"[^>]*Target="([^"]+)"/g;
+    while ((cellImageRelMatch = cellImageRelRegex.exec(cellImagesRelsXml))) {
+      ridToTarget.set(cellImageRelMatch[1], cellImageRelMatch[2]);
+    }
+
+    const candidates: Array<{ col: number; parsed: ParsedImage }> = [];
+    for (const [id, col] of idToCol) {
+      const rId = idToRId.get(id);
+      const target = rId ? ridToTarget.get(rId) : undefined;
+      if (!target) continue;
+      const resolvedPath = path.posix.normalize(path.posix.join('xl', target)).replace(/^\/+/, '');
+      const mediaEntry = findEntry(resolvedPath);
+      if (!mediaEntry) continue;
+      const ext = path.extname(resolvedPath).replace('.', '').toLowerCase();
+      const mimetype = EXT_TO_MIME[ext] ?? 'image/png';
+      candidates.push({ col, parsed: { buffer: mediaEntry.getData(), mimetype } });
+    }
+
+    return this.assignImagesBySequentialOrder(candidates);
+  }
+
+  /** 单元格引用里的列字母（如 "B"/"AA"）转 0-based 列号，与 exceljs 的 `range.tl.col` 口径一致 */
+  private columnLettersToIndex(letters: string): number {
+    let index = 0;
+    for (let i = 0; i < letters.length; i++) {
+      index = index * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return index - 1;
   }
 
   private cellText(value: ExcelJS.CellValue): string {

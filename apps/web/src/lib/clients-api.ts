@@ -1,6 +1,8 @@
 import type {
   AgentCountry,
   AgentInfoPayload,
+  CertificateRecord,
+  CertificateStatus,
   ClientDetail,
   ClientListItem,
   ClientPayload,
@@ -83,7 +85,7 @@ export const clientsApi = {
 
   get: (id: string) => apiClient.get<ClientDetail>(`/clients/${id}`),
 
-  /** onBlur + 防抖触发的实时查重：命中已存在客户时返回其基本信息 + 已有代理信息组合，用于前端切换到追加模式。 */
+  /** 证件 OCR 识别成功后触发的查重：命中已存在客户时返回其 companyInfo/legalRepInfo，用于前端回填表单并切换到追加模式。 */
   checkDuplicate: (creditCode: string) =>
     apiClient.get<{ exists: boolean; client: DuplicateCheckResult | null }>(
       `/clients/duplicate-check?creditCode=${encodeURIComponent(creditCode)}`,
@@ -113,7 +115,20 @@ export const clientsApi = {
     return apiClient.postMultipart<ClientDetail>(`/clients/${clientId}/agent-infos`, formData);
   },
 
-  /** 生成证书 PDF，见 docs/certificate-generation-design.md */
+  /**
+   * 触发/重试后台生成证书：仅入队，立即返回，不等待/下载生成结果，见 docs/certificate-generation-design.md 异步生成方案。
+   * 生成状态体现在 `AgentInfo.certificateStatus`（列表刷新可见），成功后到 `listCertificates` 查历史记录下载。
+   */
   generateCertificate: (agentInfoId: string) =>
-    apiClient.postBinary(`/agent-infos/${agentInfoId}/certificate`),
+    apiClient.post<{ certificateStatus: CertificateStatus }>(
+      `/agent-infos/${agentInfoId}/certificate`,
+    ),
+
+  /** 某条代理信息的历史成功生成记录，供"查看证书"弹窗展示 + 下载。 */
+  listCertificates: (agentInfoId: string) =>
+    apiClient.get<CertificateRecord[]>(`/agent-infos/${agentInfoId}/certificates`),
+
+  /** 按已落盘文件直接下载，不触发重新生成。 */
+  downloadCertificate: (certificateId: string) =>
+    apiClient.getBinary(`/agent-infos/certificates/${certificateId}/download`),
 };

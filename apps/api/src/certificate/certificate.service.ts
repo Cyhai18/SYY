@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActionLogService } from '../common/action-log/action-log.service';
 import type { RequestMeta } from '../auth/auth.service';
-import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 
 const PLATFORM_LABELS: Record<string, string> = {
   AMAZON: 'Amazon',
@@ -18,8 +17,13 @@ const PLATFORM_LABELS: Record<string, string> = {
   OTHER: '其他',
 };
 
-/** 存放生成 PDF 的本地目录，过渡方案，后续接对象存储时替换 */
-const UPLOAD_DIR = join(process.cwd(), 'uploads', 'certificates');
+/**
+ * 存放生成 PDF 的本地目录，过渡方案，后续接对象存储时替换。
+ * 根目录复用与客户附件一致的 `UPLOAD_DIR` 环境变量（未配置时默认 `<进程启动目录>/uploads`），
+ * 证书落在其下的 `certificates` 子目录，与附件的 `attachments` 子目录区分开。
+ */
+const UPLOAD_ROOT = process.env.UPLOAD_DIR ?? join(process.cwd(), 'uploads');
+const UPLOAD_DIR = join(UPLOAD_ROOT, 'certificates');
 
 /** `docs/certificate-generation-design.md` 第六节：编号生成、字段组装、调用 doc-service、落库。 */
 @Injectable()
@@ -32,7 +36,13 @@ export class CertificateService {
     private readonly actionLogService: ActionLogService,
   ) {}
 
-  async generate(agentInfoId: string, actor: AuthenticatedUser, meta: RequestMeta) {
+  /**
+   * 核心生成逻辑：组装字段 -> 调用 doc-service -> 落盘 -> 写 `Certificate` 归档行。
+   * 由 `CertificateController`（手动重试入队前的存在性校验）与 `CertificateProcessor`
+   * （BullMQ Worker 实际消费）共用；不再直接返回 PDF Buffer 供 HTTP 响应流式下载，
+   * 生成结果一律先落盘，前端按需通过下载接口单独取文件。
+   */
+  async generate(agentInfoId: string, actorId: string, meta: RequestMeta) {
     const agentInfo = await this.prisma.agentInfo.findUnique({
       where: { id: agentInfoId },
       include: {
@@ -51,6 +61,7 @@ export class CertificateService {
     const addressCn = isCompany ? client.companyInfo?.addressCn : client.legalRepInfo?.idAddressCn;
     const addressEn = isCompany ? client.companyInfo?.addressEn : client.legalRepInfo?.idAddressEn;
     const zip = isCompany ? client.companyInfo?.postalCode : client.legalRepInfo?.idPostalCode;
+    const contact = isCompany ? client.companyInfo?.contactPerson : client.legalRepInfo?.namePinyin;
 
     const effectiveStart = agentInfo.expectedEffectiveDate;
     const effectiveEnd = agentInfo.expiresAt;
@@ -64,7 +75,7 @@ export class CertificateService {
       party_a_address_cn: addressCn ?? '',
       party_a_address_en: addressEn ?? '',
       party_a_zip: zip ?? '',
-      party_a_contact: client.legalRepInfo?.namePinyin ?? '',
+      party_a_contact: contact ?? '',
       party_a_tel: client.phone,
       party_a_email: client.email ?? '',
       signing_date: formatDateEn(effectiveStart),
@@ -89,24 +100,44 @@ export class CertificateService {
     const filePath = join(UPLOAD_DIR, fileName);
     await writeFile(filePath, pdfBuffer);
 
-    await this.prisma.certificate.create({
+    const certificate = await this.prisma.certificate.create({
       data: {
         agentInfoId,
         agreementNumber,
-        fileUrl: join('uploads', 'certificates', fileName),
-        generatedById: actor.id,
+        fileUrl: join('certificates', fileName),
+        generatedById: actorId,
       },
     });
 
     await this.actionLogService.record({
-      userId: actor.id,
+      userId: actorId,
       action: 'GENERATE_CERTIFICATE',
       detail: JSON.stringify({ agentInfoId, agreementNumber }),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
 
-    return { fileName, buffer: pdfBuffer };
+    return { fileName, filePath, agreementNumber, certificateId: certificate.id };
+  }
+
+  /** 某条代理信息的历史生成记录（仅归档成功的），按时间倒序，供列表页"查看证书"弹窗展示 + 下载。 */
+  async listHistory(agentInfoId: string) {
+    return this.prisma.certificate.findMany({
+      where: { agentInfoId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** 按证书 id 取已落盘文件的绝对路径，供下载接口读取；不存在或未生成成功（`fileUrl` 为空）时抛异常。 */
+  async getFileForDownload(certificateId: string): Promise<{ filePath: string; fileName: string }> {
+    const certificate = await this.prisma.certificate.findUnique({ where: { id: certificateId } });
+    if (!certificate || !certificate.fileUrl) {
+      throw new NotFoundException('证书文件不存在');
+    }
+    return {
+      filePath: join(UPLOAD_ROOT, certificate.fileUrl),
+      fileName: `${certificate.agreementNumber}.pdf`,
+    };
   }
 
   /** 按天原子自增计数器，避免并发下"先 COUNT 再 +1"的竞态 */

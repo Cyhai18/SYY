@@ -124,10 +124,16 @@ body {
 }
 
 .app-title {
-  margin: 0;
+  margin: 0 !important;
   font-size: clamp(28px, 4vw, 40px);
   line-height: 1.2;
   text-wrap: pretty;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  width: fit-content;
 }
 
 .app-copy {
@@ -141,6 +147,20 @@ body {
 
 .app-panel {
   margin-top: calc(var(--space) * 4);
+}
+
+.dashboard-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: calc(var(--space) * 3);
+}
+
+.dashboard-card.ant-card {
+  border-radius: 12px;
+}
+
+.dashboard-card.ant-card > .ant-card-head {
+  color: var(--color-primary);
 }
 
 @media (max-width: 767px) {
@@ -232,13 +252,82 @@ body {
 
 .clients-page {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   display: grid;
   gap: calc(var(--space) * 2);
 }
 
+/* grid/flex 子项默认 min-width:auto，会按内容的固有宽度（比如表格设了很多列
+   minWidth）撑开所在的 grid 轨道，进而把整个页面撑宽，出现页面级横向滚动条
+   （连带把不该跟着横向滚动的 header 也拖走）。这里显式清零，让子项按父容器宽度
+   收缩，表格自身的横向滚动交给 Table 的 scroll={{ x: 'max-content' }} 处理。 */
 .clients-toolbar-card,
 .clients-table-card {
   border-radius: 12px;
+  min-width: 0;
+}
+
+.clients-toolbar-card .ant-card-body,
+.clients-table-card .ant-card-body {
+  width: 100%;
+}
+
+/* 客户主表格：撑满卡片宽度，列按内容自适应拉伸，避免大屏下两侧留白 */
+.clients-table-card .ant-table-wrapper,
+.clients-table-card .ant-table,
+.clients-table-card .ant-table-container,
+.clients-table-card .ant-table-content > table {
+  width: 100%;
+}
+
+.clients-table-card .ant-table-thead > tr > th {
+  background: rgb(from var(--color-primary) r g b / 0.2);
+  font-weight: 600;
+}
+
+.client-agent-subtable-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
+}
+
+.client-agent-subtable .ant-table {
+  background: transparent;
+}
+
+.clients-page .ant-table-expanded-row .ant-table-cell,
+.clients-table-card .ant-table-expanded-row .ant-table-cell {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.client-agent-subtable .ant-table-thead > tr > th {
+  background: transparent;
+  font-weight: 600;
+}
+
+.ant-table-wrapper tr.ant-table-expanded-row > td {
+  background: rgb(from var(--color-secondary) r g b / 0.06);
+}
+
+.client-agent-subtable .ant-table-tbody > tr > td {
+  background: transparent;
+}
+
+.client-agent-subtable .ant-table-tbody > tr:last-child > td {
+  border-bottom: none;
+}
+
+@media (max-width: 900px) {
+  .clients-toolbar-card .ant-form-item {
+    width: 100%;
+    margin-right: 0 !important;
+  }
+
+  .clients-toolbar-card .ant-form-item-control-input-content > * {
+    width: 100% !important;
+  }
 }
 
 .client-wizard-page {
@@ -254,7 +343,14 @@ body {
 
 .wizard-footer {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(var(--space) * 1.5);
+}
+
+.wizard-footer-hint.ant-alert {
+  padding: 6px 12px;
+  font-size: 13px;
 }
 
 .wizard-step-type {
@@ -271,4 +367,487 @@ body {
 .wizard-type-card--active {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgb(from var(--color-primary) r g b / 0.15);
+}
+
+/* 代理信息 / 店铺 / 产品信息 三级标题的醒目样式，便于区分层级 */
+.section-title {
+  display: inline-flex;
+  align-items: center;
+  /* padding: 2px 10px; */
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.section-title--agent {
+  color: var(--color-primary);
+}
+
+.section-title__flag {
+  font-size: 18px;
+  margin-right: 4px;
+}
+
+.section-title--shop {
+  color: #0e7490;
+}
+
+.section-title--product {
+  color: #92600a;
+}
+
+.agent-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: calc(var(--space) * 2);
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1100px) {
+  .agent-info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 代理信息卡片：常驻展示（不可折叠）。不用 border、不用阴影，改用整卡浅色背景
+   （标题栏用稍深一点的同色调，内容区用更浅的底色）来区分卡片范围，
+   靠色块本身的色差而不是描边/投影来划出边界，层次感更柔和。 */
+.agent-card {
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgb(from var(--color-primary) r g b / 0.05);
+}
+
+/* antd Card variant="borderless" 自带一条 :not(.ant-card-bordered) 的默认
+   box-shadow（用于无描边时靠阴影提示卡片边界），这里代理卡片改用背景色区分，
+   不需要这层阴影，强制去掉。 */
+.agent-card.ant-card:not(.ant-card-bordered) {
+  box-shadow: none;
+}
+
+/* Card 头部默认高度（56px）比 Collapse 头部（padding 12px 16px，约 46px）高出一截，
+   两种标题挨在一起看会明显不齐，这里按 Collapse 头部的实际内边距对齐，
+   让"代理"大卡片标题栏与卡片内"店铺"折叠标题栏高度一致。 */
+.agent-card > .ant-card-head {
+  background: rgb(from var(--color-primary) r g b / 0.12);
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+/* 卡片内容区沿用卡片底色（透明，直接露出 .agent-card 的背景色），
+   表单控件本身是白底，在浅色卡片背景衬托下依然能看清输入框边界。 */
+.agent-card > .ant-card-body {
+  background: transparent;
+}
+
+.shop-card.ant-card > .ant-card-body {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* 法人信息 / 联系方式：和代理信息大卡片同一套处理手法——无 border、无默认阴影，
+   靠标题栏/内容区的浅色底区分卡片范围。 */
+.form-card {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.form-card.ant-card:not(.ant-card-bordered) {
+  box-shadow: none;
+}
+
+.form-card > .ant-card-head {
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+.form-card > .ant-card-body {
+  background: transparent;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+}
+
+/* 上传营业执照 / 身份证区域：默认 padding 偏大，统一再缩短 5px 高度 */
+.upload-dragger-compact.ant-upload-wrapper .ant-upload-drag .ant-upload-btn {
+  padding: 11px 0;
+}
+
+/* 营业执照/身份证上传后的缩略图预览：悬浮展示"查看/删除"两个操作 icon，见 CertUploadPreview 组件 */
+.cert-upload-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 104px;
+  overflow: hidden;
+  background: #fafafa;
+  border: 1px dashed #d9d9d9;
+  border-radius: 8px;
+}
+
+.cert-upload-preview__img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.cert-upload-preview__file-name {
+  padding: 0 12px;
+  overflow: hidden;
+  color: var(--color-body);
+  font-size: 13px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cert-upload-preview__mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0);
+  opacity: 0;
+  transition: all 0.2s ease;
+}
+
+.cert-upload-preview:hover .cert-upload-preview__mask {
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 1;
+}
+
+.cert-upload-preview__icon {
+  font-size: 18px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.cert-upload-preview__icon:hover {
+  color: var(--color-primary);
+}
+
+/* 上传成功后自动 OCR 识别期间：常驻遮罩 + 转圈 + 文案，替代原来悬浮才可见的操作 icon，
+   避免"图片已展示但看不出正在识别"的困惑（见 CertUploadPreview 组件） */
+.cert-upload-preview__loading-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.cert-upload-preview__loading-text {
+  color: #fff;
+  font-size: 13px;
+}
+
+.form-card--legal {
+  background: rgb(from var(--color-primary) r g b / 0.05);
+}
+
+.form-card--legal > .ant-card-head {
+  background: rgb(from var(--color-primary) r g b / 0.12);
+}
+
+.form-card--contact {
+  background: rgb(from var(--color-secondary) r g b / 0.05);
+}
+
+.form-card--contact > .ant-card-head {
+  background: rgb(from var(--color-secondary) r g b / 0.12);
+}
+
+/* 只读详情（客户资料 / 代理信息抽屉）逐字段展示，样式对齐向导表单项的 label/内容排版 */
+.info-item {
+  margin-bottom: calc(var(--space) * 2);
+}
+
+.info-item__label {
+  margin-bottom: 4px;
+  color: var(--color-body);
+  font-size: 13px;
+}
+
+.info-item__value {
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 14px;
+  word-break: break-all;
+}
+
+/* 附件展示卡片：类型标签 + 图片缩略图/文件链接 */
+.attachment-item__label {
+  margin-bottom: 8px;
+  color: var(--color-body);
+  font-size: 13px;
+}
+
+.wizard-steps-card .ant-card-body {
+  padding: 16px;
+}
+
+.wizard-back-btn {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  margin-bottom: 8px;
+  padding: 0 4px;
+  font-size: 13px;
+  color: rgb(from var(--color-primary) r g b / 0.65);
+  /* border: 0; */
+}
+
+.wizard-back-btn:hover {
+  color: var(--color-primary) !important;
+  background: transparent !important;
+}
+
+/* 店铺列表：antd Collapse 默认把每个 item 渲染成带独立描边+间距的小卡片，
+   多个店铺堆在一起时边框重复、缝隙杂乱。这里去掉每个 item 的独立描边，
+   改成整条列表共用一个圆角+阴影外框，item 之间只用一条极浅分隔线区分，
+   视觉上与代理信息/产品信息大卡片的"无边框+阴影"风格保持一致。 */
+.shop-collapse.ant-collapse {
+  border: none;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(29, 41, 57, 0.06);
+  overflow: hidden;
+}
+
+.shop-collapse.ant-collapse > .ant-collapse-item {
+  border: none;
+  border-bottom: 1px solid rgb(from var(--color-secondary) r g b / 0.15);
+  border-radius: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* .ant-collapse-panel 是 .ant-collapse-item 内部的子元素（不是 .ant-collapse
+   的直接子元素），antd 默认给它加了 border-top，之前用 > 直接子选择器写错了
+   层级导致没盖掉。这里按实际的嵌套关系（后代选择器）+ !important 覆盖。 */
+.shop-collapse.ant-collapse .ant-collapse-panel {
+  border-top: none !important;
+}
+
+.shop-collapse.ant-collapse > .ant-collapse-item:last-child {
+  border-bottom: none;
+}
+
+.shop-collapse > .ant-collapse-item > .ant-collapse-header {
+  background: rgb(from var(--color-secondary) r g b / 0.07);
+}
+
+/* antd 给首/尾 item 的 header 各自加了 border-radius（配合外层容器的圆角），
+   选择器带 :first-child/:last-child，和上面这条背景色规则同优先级、写在后面
+   会互相覆盖导致要么全部塌成直角、要么首尾各自为政不统一。这里不清零，
+   而是显式声明成和外层 .shop-collapse 容器一致的圆角，其余中间项保持直角。 */
+.shop-collapse.ant-collapse > .ant-collapse-item:first-child > .ant-collapse-header {
+  border-radius: 8px 8px 0 0;
+}
+
+/* .shop-collapse.ant-collapse > .ant-collapse-item:last-child > .ant-collapse-header {
+  border-radius: 0 0 8px 8px;
+} */
+
+/* .shop-collapse.ant-collapse > .ant-collapse-item:only-child > .ant-collapse-header {
+  border-radius: 8px;
+} */
+
+/* 新增代理信息：悬浮在页面右侧的圆形按钮，避免卡片一多就要滚到底部才能新增 */
+.agent-info-fab {
+  position: fixed;
+  right: 32px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 100;
+  box-shadow: 0 4px 12px rgb(from var(--color-primary) r g b / 0.35);
+}
+
+/* 新增代理信息：Popover 内的代理国家选择列表 */
+.agent-country-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.agent-country-picker .ant-btn {
+  display: flex;
+  align-items: center;
+  text-align: left;
+}
+
+.agent-country-picker .ant-btn:hover {
+  background: rgb(from var(--color-primary) r g b / 0.08);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.agent-country-picker__flag {
+  margin-right: 6px;
+  font-size: 20px;
+}
+
+.agent-country-picker__item--added {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.agent-country-picker .ant-btn.agent-country-picker__item--added:hover {
+  background: rgb(from var(--color-primary) r g b / 0.12) !important;
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary) !important;
+}
+
+.agent-country-picker__check {
+  margin-left: auto;
+  color: var(--color-primary);
+}
+
+.agent-country-picker__hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-body);
+}
+
+/* “新增店铺 / 新增产品”入口按钮：原来用 dashed 描边框来暗示“可点击添加”，
+   但页面上大卡片都已经改成无边框+阴影，虚线框反而显得突兀。这里改成无描边的
+   文字按钮，用各自区块的主题色做浅色底 + hover 加深来提示可点击，与整体弱化
+   border、靠色块/阴影分层的风格保持一致。 */
+.add-row-btn {
+  display: flex;
+  width: auto;
+  margin: 0 auto;
+  border: none !important;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.add-row-btn--shop {
+  color: #0e7490;
+  background: transparent;
+}
+
+.add-row-btn--shop:hover {
+  color: #0e7490 !important;
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
+.add-row-btn--product {
+  color: #92600a;
+  background: transparent;
+}
+
+.add-row-btn--product:hover {
+  color: #92600a !important;
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
+/* 产品信息：不再用 Card 容器（无 border、无阴影、无卡片背景色），
+   只保留一行标题文字 + 表格本身，嵌套层级已经很深，不需要再叠一层卡片外观。 */
+
+/* title 用和表头一致的暖色底，撑满宽度并只保留上左右圆角；
+   table 本身默认自带上左右圆角（antd Table 容器圆角），这里去掉表格的上圆角，
+   避免 title 和 table 紧挨在一起时圆角对不上、出现两段各自独立的弧线。 */
+/* .section-title 默认是 inline-flex（跟随文字宽度收缩），这里覆盖成 flex 撑满
+   一整行，背景色/圆角才能铺满整个标题栏、和下面的 table 一样宽，而不是只
+   包住"产品信息"四个字。 */
+.product-section__title {
+  display: flex;
+  padding: 10px 16px;
+  background: rgb(from var(--color-accent) r g b / 0.08);
+  border-radius: 8px 8px 0 0;
+}
+
+.product-table.ant-table-wrapper {
+  width: 100%;
+}
+
+.product-table .ant-table-container {
+  width: 100%;
+}
+
+/* antd 给 ant-table-container 加的 ::before/::after 是横向滚动时两侧的阴影提示条，
+   这里不需要这层阴影，宽度清零即可去掉 */
+.product-table.ant-table-wrapper .ant-table-container::before,
+.product-table.ant-table-wrapper .ant-table-container::after {
+  width: 0 !important;
+}
+
+/* table 上左右圆角紧挨在 title（已经有上左右圆角）下面，这里只需把
+   ant-table-content 的圆角改成"上直角、下沿用容器圆角"，两者衔接处就对得上，
+   不需要再单独覆盖 thead 单元格或 container 的圆角。 */
+.product-table.ant-table-wrapper .ant-table-container > .ant-table-content {
+  border-radius: 0 0 8px 8px;
+}
+
+/* antd 默认给表头第一行首/尾单元格各加了圆角，紧贴 title 下方时会露出多余弧线，去掉 */
+.product-table.ant-table-wrapper
+  .ant-table-container
+  table
+  > thead
+  > tr:first-child
+  > *:last-child {
+  border-radius: 0 !important;
+}
+
+.product-table.ant-table-wrapper
+  .ant-table-container
+  table
+  > thead
+  > tr:first-child
+  > *:first-child {
+  border-start-start-radius: 0 !important;
+}
+
+/* 表头延续标题的暖色调，弱化默认灰底；同时去掉表头单元格的下边框 */
+.product-table .ant-table-thead > tr > th {
+  background: rgb(from var(--color-accent) r g b / 0.04);
+  border-bottom: none;
+}
+
+/* .ant-table-footer 自带一层灰底，和里面 .add-row-btn--product 自己的浅色调
+   叠在一起会出现"两次背景色"的双层色块，这里去掉表格 footer 自身的背景，
+   只保留按钮本身的色调。 */
+.product-table .ant-table-footer {
+  border-bottom: none;
+  background: transparent;
+  padding: 0;
+}
+
+/* 产品信息表格：去掉每行单元格的下边框，行与行之间不再有分隔线；
+   行高适当加大，横向滚动条用与页面同色系的浅灰蓝细滚动条 */
+.product-table .ant-table-tbody > tr > td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-bottom: none;
+}
+
+.product-table .ant-table-body,
+.product-table .ant-table-content {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(from var(--color-body) r g b / 0.35) transparent;
+}
+
+.product-table .ant-table-body::-webkit-scrollbar,
+.product-table .ant-table-content::-webkit-scrollbar {
+  height: 8px;
+}
+
+.product-table .ant-table-body::-webkit-scrollbar-thumb,
+.product-table .ant-table-content::-webkit-scrollbar-thumb {
+  background: rgb(from var(--color-body) r g b / 0.35);
+  border-radius: 4px;
+}
+
+.product-table .ant-table-body::-webkit-scrollbar-thumb:hover,
+.product-table .ant-table-content::-webkit-scrollbar-thumb:hover {
+  background: rgb(from var(--color-body) r g b / 0.55);
+}
+
+.product-table .ant-table-body::-webkit-scrollbar-track,
+.product-table .ant-table-content::-webkit-scrollbar-track {
+  background: transparent;
 }

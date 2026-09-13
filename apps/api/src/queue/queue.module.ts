@@ -1,7 +1,13 @@
 import { Global, Inject, Logger, Module, type OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
-import { CLIENT_IMPORT_QUEUE, CLIENT_IMPORT_QUEUE_NAME, REDIS_CONNECTION } from './queue.constants';
+import {
+  CERTIFICATE_GENERATE_QUEUE,
+  CERTIFICATE_GENERATE_QUEUE_NAME,
+  CLIENT_IMPORT_QUEUE,
+  CLIENT_IMPORT_QUEUE_NAME,
+  REDIS_CONNECTION,
+} from './queue.constants';
 
 /**
  * BullMQ + Redis 基础设施模块（见 docs/client-batch-import-design.md 第 12/13 节）。
@@ -28,8 +34,14 @@ import { CLIENT_IMPORT_QUEUE, CLIENT_IMPORT_QUEUE_NAME, REDIS_CONNECTION } from 
         new Queue(CLIENT_IMPORT_QUEUE_NAME, { connection }),
       inject: [REDIS_CONNECTION],
     },
+    {
+      provide: CERTIFICATE_GENERATE_QUEUE,
+      useFactory: (connection: IORedis): Queue =>
+        new Queue(CERTIFICATE_GENERATE_QUEUE_NAME, { connection }),
+      inject: [REDIS_CONNECTION],
+    },
   ],
-  exports: [REDIS_CONNECTION, CLIENT_IMPORT_QUEUE],
+  exports: [REDIS_CONNECTION, CLIENT_IMPORT_QUEUE, CERTIFICATE_GENERATE_QUEUE],
 })
 export class QueueModule implements OnModuleDestroy {
   private readonly logger = new Logger(QueueModule.name);
@@ -37,10 +49,12 @@ export class QueueModule implements OnModuleDestroy {
   constructor(
     @Inject(REDIS_CONNECTION) private readonly connection: IORedis,
     @Inject(CLIENT_IMPORT_QUEUE) private readonly clientImportQueue: Queue,
+    @Inject(CERTIFICATE_GENERATE_QUEUE) private readonly certificateGenerateQueue: Queue,
   ) {}
 
   async onModuleDestroy(): Promise<void> {
     await this.clientImportQueue.close();
+    await this.certificateGenerateQueue.close();
     this.connection.disconnect();
     this.logger.log('QueueModule: Redis connection closed');
   }

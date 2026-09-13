@@ -105,9 +105,9 @@ OCR_SERVICE_URL=http://127.0.0.1:8000
 enum ClientType { COMPANY INDIVIDUAL }
 
 enum ClientStatus {
-  PENDING_REVIEW // 审核中
-  APPROVED       // 已通过
-  DISABLED       // 已禁用
+  NORMAL          // 正常
+  PENDING_RENEWAL // 待续费
+  PENDING_REVIEW  // 待审核
   // 后续新增状态：加枚举值 + migration，同 Role 枚举扩展方式
 }
 

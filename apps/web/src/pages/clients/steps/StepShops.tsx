@@ -1,18 +1,23 @@
-import { Alert, Button, Collapse, Descriptions, Empty, Tag } from 'antd';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import {
-  AGENT_COUNTRY_COMPANIES,
-  AGENT_COMPANY_LABELS,
-  AGENT_COUNTRY_LABELS,
-  PLATFORM_LABELS,
-} from '@funtax/shared';
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import { Button, Card, Empty, Popover } from 'antd';
+import { CheckCircleFilled, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { AGENT_COUNTRY_COMPANIES, AGENT_COUNTRY_LABELS, type AgentCountry } from '@funtax/shared';
 import {
   nextKey,
   useClientWizardStore,
   type AgentInfoDraft,
   type ShopDraft,
 } from '../../../store/client-wizard-store';
-import { AgentInfoEditor } from './AgentInfoEditor';
+import { AgentInfoEditor, type AgentInfoEditorHandle } from './AgentInfoEditor';
+
+/** 代理国家 -> 国旗 emoji，选择器里配合中文名一起展示，更醒目直观。 */
+const AGENT_COUNTRY_FLAGS: Record<AgentCountry, string> = {
+  GB: '🇬🇧',
+  EU: '🇪🇺',
+  US: '🇺🇸',
+  TR: '🇹🇷',
+  CA: '🇨🇦',
+};
 
 /** 深拷贝店铺草稿（含产品明细）并重新生成本地 key，避免与上一条代理信息共享引用/key 冲突。 */
 function cloneShops(shops: ShopDraft[]): ShopDraft[] {
@@ -24,111 +29,183 @@ function cloneShops(shops: ShopDraft[]): ShopDraft[] {
 }
 
 /**
- * 新增代理信息时，默认带上上一条代理信息已填写的店铺信息，减少重复录入；
- * 若尚无上一条（第一次新增），则店铺列表为空。
+ * 新增指定国家的代理信息：代理国家一旦选定即锁定，代理公司默认取该国家下第一家，
+ * 并带上上一条代理信息已填写的店铺信息，减少重复录入。
  */
-function createEmptyAgentInfo(prevAgentInfos: AgentInfoDraft[]): AgentInfoDraft {
+function createAgentInfoForCountry(
+  country: AgentCountry,
+  prevAgentInfos: AgentInfoDraft[],
+): AgentInfoDraft {
   const prev = prevAgentInfos[prevAgentInfos.length - 1];
   return {
     key: nextKey(),
-    country: 'GB',
+    country,
     expectedEffectiveDate: '',
     agentYears: 1,
-    agentCompany: AGENT_COUNTRY_COMPANIES.GB[0] ?? 'OVERSEA_WALKERS_GB',
+    agentCompany: AGENT_COUNTRY_COMPANIES[country][0],
     shops: prev ? cloneShops(prev.shops) : [],
   };
 }
 
+/** 供父级（ClientWizardPage）持有 ref 触发校验：提交前调用，会校验所有代理信息（含其下店铺/产品）字段。 */
+export interface StepShopsHandle {
+  validateFields: () => Promise<void>;
+}
+
 /** Step4：代理信息，一个客户下可添加多条代理信息，每条代理信息内含多个店铺（店铺下再含产品明细，均可多条）。 */
-export function StepShops() {
+export const StepShops = forwardRef<StepShopsHandle>(function StepShops(_props, ref) {
   const agentInfos = useClientWizardStore((s) => s.agentInfos);
   const setAgentInfos = useClientWizardStore((s) => s.setAgentInfos);
-  const mode = useClientWizardStore((s) => s.mode);
-  const existingAgentCombos = useClientWizardStore((s) => s.existingAgentCombos);
   const existingAgentInfos = useClientWizardStore((s) => s.existingAgentInfos);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const cardRefs = useRef<Partial<Record<AgentCountry, HTMLDivElement | null>>>({});
+  const agentInfoRefs = useRef<Map<string, AgentInfoEditorHandle>>(new Map());
 
-  const addAgentInfo = () => setAgentInfos([...agentInfos, createEmptyAgentInfo(agentInfos)]);
+  useImperativeHandle(ref, () => ({
+    validateFields: async () => {
+      await Promise.all(agentInfos.map((a) => agentInfoRefs.current.get(a.key)?.validateFields()));
+    },
+  }));
+
   const removeAgentInfo = (key: string) => setAgentInfos(agentInfos.filter((a) => a.key !== key));
   const updateAgentInfo = (key: string, next: AgentInfoDraft) =>
     setAgentInfos(agentInfos.map((a) => (a.key === key ? next : a)));
 
-  /** 某条代理信息在校验重复时，需排除自己当前已选的组合，否则无法保留自身的选择。 */
-  const usedCombosExcluding = (selfKey: string) => {
-    const combos = new Set(existingAgentCombos);
-    agentInfos.forEach((a) => {
-      if (a.key !== selfKey) combos.add(`${a.country}:${a.agentCompany}`);
-    });
-    return combos;
+  /**
+   * 每个代理国家只能有一条代理信息，可选列表里需要剔除/禁用两类国家：
+   * - `sessionCountries`：本次向导会话里新增的国家，对应下方有可编辑的卡片，点击可定位过去；
+   * - `existingCountries`：追加模式下该客户数据库里已有的国家（`checkDuplicate` 返回的
+   *   `existingAgentInfos`），本次会话未新增对应卡片，选择器里直接禁用并标注"（已存在）"，
+   *   不可点击、也无处可定位；重复组合仍由后端 `appendAgentInfo` 兜底校验并报错，双重保险。
+   */
+  const sessionCountries = new Set<AgentCountry>(agentInfos.map((a) => a.country));
+  const existingCountries = new Set<AgentCountry>(existingAgentInfos.map((a) => a.country));
+  const allCountries = Object.keys(AGENT_COUNTRY_LABELS) as AgentCountry[];
+
+  const addAgentInfo = (country: AgentCountry) => {
+    setAgentInfos([...agentInfos, createAgentInfoForCountry(country, agentInfos)]);
+    setPickerOpen(false);
   };
+
+  /** 侧边浮动按钮里点击已存在的国家：不重复新增，而是滚动定位到对应卡片。 */
+  const locateAgentInfo = (country: AgentCountry) => {
+    setPickerOpen(false);
+    requestAnimationFrame(() => {
+      cardRefs.current[country]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
+  const handlePickerSelect = (country: AgentCountry) => {
+    if (existingCountries.has(country)) return;
+    if (sessionCountries.has(country)) {
+      locateAgentInfo(country);
+    } else {
+      addAgentInfo(country);
+    }
+  };
+
+  const countryPicker = (
+    <div className="agent-country-picker">
+      {allCountries.map((country) => {
+        const alreadyExists = existingCountries.has(country);
+        const addedThisSession = sessionCountries.has(country);
+        return (
+          <Button
+            key={country}
+            block
+            disabled={alreadyExists}
+            className={addedThisSession ? 'agent-country-picker__item--added' : undefined}
+            onClick={() => handlePickerSelect(country)}
+          >
+            <span className="agent-country-picker__flag">{AGENT_COUNTRY_FLAGS[country]}</span>
+            {AGENT_COUNTRY_LABELS[country]}
+            {alreadyExists ? '（已存在）' : null}
+            {addedThisSession ? (
+              <CheckCircleFilled className="agent-country-picker__check" />
+            ) : null}
+          </Button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div>
-      {mode === 'APPEND' ? (
-        <>
-          <Alert
-            type="info"
-            showIcon
-            message="该客户已存在以下代理信息，不可编辑；请在下方新增本次要追加的代理信息"
-            style={{ marginBottom: 12 }}
-          />
-          {existingAgentInfos.length > 0 ? (
-            <Collapse
-              items={existingAgentInfos.map((a, index) => ({
-                key: `${a.country}:${a.agentCompany}`,
-                label: `已有代理信息 ${index + 1}：${AGENT_COUNTRY_LABELS[a.country]} - ${AGENT_COMPANY_LABELS[a.agentCompany]}`,
-                // 查重接口出于隐私考虑只返回摘要字段（见 ClientsService.checkDuplicate），
-                // 这里只做摘要展示，不能借用 AgentInfoEditor/ShopEditor 渲染成看似完整实则残缺的表单。
-                children: (
-                  <Descriptions column={1} size="small" bordered>
-                    {a.shops.map((shop, shopIndex) => (
-                      <Descriptions.Item key={shopIndex} label={`店铺 ${shopIndex + 1}`}>
-                        <Tag>{PLATFORM_LABELS[shop.platform]}</Tag>
-                        {shop.shopName}（{shop.productCount} 个产品）
-                      </Descriptions.Item>
-                    ))}
-                  </Descriptions>
-                ),
-              }))}
-              style={{ marginBottom: 16 }}
-            />
-          ) : null}
-        </>
-      ) : null}
-
       {agentInfos.length === 0 ? (
-        <Empty description="尚未添加代理信息" style={{ marginBottom: 16 }} />
+        <div style={{ marginBottom: 16, textAlign: 'center' }}>
+          <Empty description="尚未添加代理信息" style={{ marginBottom: 16 }} />
+          <Popover
+            trigger="click"
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            placement="bottom"
+            content={countryPicker}
+          >
+            <Button type="primary" icon={<PlusOutlined />}>
+              新增代理信息
+            </Button>
+          </Popover>
+        </div>
       ) : (
-        <Collapse
-          defaultActiveKey={agentInfos.map((a) => a.key)}
-          items={agentInfos.map((agentInfo, index) => ({
-            key: agentInfo.key,
-            label: `代理信息 ${index + 1}`,
-            extra: (
-              <Button
-                type="text"
-                danger
-                size="small"
-                icon={<DeleteOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeAgentInfo(agentInfo.key);
-                }}
-              />
-            ),
-            children: (
-              <AgentInfoEditor
-                agentInfo={agentInfo}
-                usedCombos={usedCombosExcluding(agentInfo.key)}
-                onChange={(next) => updateAgentInfo(agentInfo.key, next)}
-              />
-            ),
-          }))}
-          style={{ marginBottom: 16 }}
-        />
+        <div className="agent-info-grid">
+          {agentInfos.map((agentInfo) => (
+            <div
+              key={agentInfo.key}
+              ref={(el) => {
+                cardRefs.current[agentInfo.country] = el;
+              }}
+            >
+              <Card
+                className="agent-card"
+                variant="borderless"
+                title={
+                  <span className="section-title section-title--agent">
+                    <span className="section-title__flag">
+                      {AGENT_COUNTRY_FLAGS[agentInfo.country]}
+                    </span>
+                    {AGENT_COUNTRY_LABELS[agentInfo.country]}代理
+                  </span>
+                }
+                extra={
+                  <Button
+                    type="text"
+                    danger
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    onClick={() => removeAgentInfo(agentInfo.key)}
+                  />
+                }
+              >
+                <AgentInfoEditor
+                  ref={(handle) => {
+                    if (handle) agentInfoRefs.current.set(agentInfo.key, handle);
+                    else agentInfoRefs.current.delete(agentInfo.key);
+                  }}
+                  agentInfo={agentInfo}
+                  onChange={(next) => updateAgentInfo(agentInfo.key, next)}
+                />
+              </Card>
+            </div>
+          ))}
+        </div>
       )}
-      <Button type="dashed" block icon={<PlusOutlined />} onClick={addAgentInfo}>
-        新增代理信息
-      </Button>
+      {agentInfos.length > 0 ? (
+        <Popover
+          trigger="click"
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          placement="left"
+          content={countryPicker}
+        >
+          <Button
+            className="agent-info-fab"
+            type="primary"
+            shape="circle"
+            size="large"
+            icon={<PlusOutlined />}
+          />
+        </Popover>
+      ) : null}
     </div>
   );
-}
+});

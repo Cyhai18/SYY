@@ -53,6 +53,7 @@ const AGENT_COMPANY_LABELS: Record<AgentCompany, string> = {
   EU_CONSULTEN_SRLS: 'EU Consulten Srls',
   OVERSEA_WALKERS_US: 'Oversea Walkers LLC',
   OVERSEA_WALKERS_TR: 'OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi',
+  OVERSEA_WALKERS_CA: 'Oversea Walkers',
 };
 
 /** 代理公司所属国家，用于在 Excel 模板下拉框里给同名/易混淆的公司加国家后缀做区分，见 AGENT_COMPANY_LABELS_WITH_COUNTRY */
@@ -62,6 +63,7 @@ const AGENT_COMPANY_COUNTRY: Record<AgentCompany, AgentCountry> = {
   EU_CONSULTEN_SRLS: 'EU',
   OVERSEA_WALKERS_US: 'US',
   OVERSEA_WALKERS_TR: 'TR',
+  OVERSEA_WALKERS_CA: 'CA',
 };
 
 /** 代理公司下拉框展示用文案：公司全称 + "（国家）" 后缀，Excel 模板与人工核对表单据此展示，导入时按后缀反查 */
@@ -141,6 +143,7 @@ export class RowValidatorService {
       provinceEn: parsed.companyInfo.provinceEn || businessLicenseOcr?.fields.provinceEn,
       cityEn: parsed.companyInfo.cityEn || businessLicenseOcr?.fields.cityEn,
       postalCode: parsed.companyInfo.postalCode || businessLicenseOcr?.fields.postalCode,
+      contactPerson: parsed.contactPerson,
     };
 
     const legalRepInfo = {
@@ -152,13 +155,22 @@ export class RowValidatorService {
       idPostalCode: parsed.legalRepInfo.idPostalCode || idCardFrontOcr?.fields.idPostalCode,
     };
 
+    const resolvedClientType = reverseLabel(CLIENT_TYPE_LABELS, parsed.clientType);
+    // Client.uniqueIdentifier：公司类型取信用代码，个人类型取身份证号，与页面向导提交逻辑保持一致
+    const uniqueIdentifier =
+      resolvedClientType === 'INDIVIDUAL' ? legalRepInfo.idNumber : companyInfo.creditCode;
+
     const candidate = {
-      clientType: reverseLabel(CLIENT_TYPE_LABELS, parsed.clientType),
+      clientType: resolvedClientType,
       phone: parsed.phone,
       email: parsed.email,
       remark: parsed.remark,
-      companyInfo,
-      legalRepInfo,
+      uniqueIdentifier,
+      // 公司信息/法人信息只在对应注册类型下才校验：与页面新增客户向导一致，企业类型不采集法人信息，
+      // 个人类型不采集公司信息。此前无条件都塞进 candidate，导致 legalRepInfo 的必填字段
+      // （nameCn/namePinyin/idNumber/idAddressCn）在企业类型下也被 class-validator 强制校验。
+      companyInfo: resolvedClientType === 'COMPANY' ? companyInfo : undefined,
+      legalRepInfo: resolvedClientType === 'INDIVIDUAL' ? legalRepInfo : undefined,
       agentInfos: parsed.agentInfos.map((agent) => ({
         country: reverseLabel(AGENT_COUNTRY_LABELS, agent.country),
         agentCompany: reverseAgentCompany(agent.agentCompany),
@@ -184,16 +196,83 @@ export class RowValidatorService {
       })),
     };
 
+    // 图片/联系人是否必填取决于注册类型：企业类型营业执照图片+联系人必填，身份证正反面选填；
+    // 个人类型身份证正反面必填，营业执照图片+联系人选填。与页面新增客户表单的必填规则保持一致。
+    if (candidate.clientType === 'COMPANY') {
+      const info = candidate.companyInfo!;
+      if (!parsed.images.businessLicense) {
+        issues.push({ field: 'images.businessLicense', message: '企业类型必须上传营业执照图片' });
+      }
+      if (!info.contactPerson) {
+        issues.push({ field: 'companyInfo.contactPerson', message: '企业类型必须填写联系人' });
+      }
+      // 与 ClientsService.assertRequiredFields 保持一致：这些字段在 DTO 上标记为选填（OCR 识别产出），
+      // 但企业类型客户实际创建时是硬性必填，提前在此校验，避免"预览通过"但落库时才报错。
+      if (!info.nameCn) {
+        issues.push({ field: 'companyInfo.nameCn', message: '公司中文名不能为空' });
+      }
+      if (!info.nameEn) {
+        issues.push({ field: 'companyInfo.nameEn', message: '公司英文名不能为空' });
+      }
+      if (!info.addressCn) {
+        issues.push({ field: 'companyInfo.addressCn', message: '公司中文地址不能为空' });
+      }
+      if (!info.addressEn) {
+        issues.push({ field: 'companyInfo.addressEn', message: '公司英文地址不能为空' });
+      }
+      if (!info.postalCode) {
+        issues.push({ field: 'companyInfo.postalCode', message: '邮编不能为空' });
+      }
+    } else if (candidate.clientType === 'INDIVIDUAL') {
+      const info = candidate.legalRepInfo!;
+      if (!parsed.images.idCardFront) {
+        issues.push({ field: 'images.idCardFront', message: '个人类型必须上传身份证正面图片' });
+      }
+      if (!parsed.images.idCardBack) {
+        issues.push({ field: 'images.idCardBack', message: '个人类型必须上传身份证反面图片' });
+      }
+      // 同上，与 ClientsService.assertRequiredFields 的个人类型必填规则保持一致
+      if (!info.idAddressEn) {
+        issues.push({ field: 'legalRepInfo.idAddressEn', message: '身份证地址（英文）不能为空' });
+      }
+      if (!info.idPostalCode) {
+        issues.push({ field: 'legalRepInfo.idPostalCode', message: '邮编不能为空' });
+      }
+    }
+
+    // 代理信息与页面新增客户向导保持一致的额外业务规则（class-validator 无法表达的跨字段/结构性约束）：
+    // 1）代理公司必须与代理国家匹配（页面下拉框按国家过滤选项，导入走文字反查需要显式校验，见
+    //    docs/client-batch-import-design.md 第 8 节"枚举值不合法"）；
+    // 2）同一个新客户内，代理国家不能重复（页面每个国家只能创建一条代理信息，导入按行分组理论上可能
+    //    因用户填写疏漏出现重复国家，需拦截）。
+    // 「每条代理信息下至少一条店铺」由 AgentInfoDto.shops 的 @ArrayMinSize(1) 统一校验，此处不重复判断。
+    const seenCountries = new Set<string>();
+    candidate.agentInfos.forEach((agent, index) => {
+      const prefix = `agentInfos[${index}]`;
+      if (agent.country && agent.agentCompany) {
+        const expectedCountry = AGENT_COMPANY_COUNTRY[agent.agentCompany];
+        if (expectedCountry !== agent.country) {
+          issues.push({ field: `${prefix}.agentCompany`, message: '代理公司与代理国家不匹配' });
+        }
+      }
+      if (agent.country) {
+        if (seenCountries.has(agent.country)) {
+          issues.push({ field: `${prefix}.country`, message: '同一客户下代理国家不能重复' });
+        }
+        seenCountries.add(agent.country);
+      }
+    });
+
     const dto = plainToInstance(ClientPayloadDto, candidate);
     const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: false });
     for (const error of errors) {
       this.flattenConstraints(error, issues);
     }
 
-    if (candidate.companyInfo.creditCode) {
-      const duplicate = await this.clientsService.findDuplicate(candidate.companyInfo.creditCode);
+    if (candidate.uniqueIdentifier) {
+      const duplicate = await this.clientsService.findDuplicate(candidate.uniqueIdentifier);
       if (duplicate) {
-        issues.push({ field: 'companyInfo.creditCode', message: '该客户已存在，请勿重复创建' });
+        issues.push({ field: 'uniqueIdentifier', message: '该客户已存在，请勿重复创建' });
       }
     }
 
