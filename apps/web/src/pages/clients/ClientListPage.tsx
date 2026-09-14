@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type ComponentProps } from 'react';
 import {
+  Badge,
   Button,
   Card,
   DatePicker,
+  Drawer,
   Empty,
   Form,
   Input,
@@ -21,6 +23,7 @@ import {
   EyeOutlined,
   FilePdfOutlined,
   FileProtectOutlined,
+  HistoryOutlined,
   InboxOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -41,7 +44,7 @@ import {
   type ClientType,
 } from '@funtax/shared';
 import { clientsApi, type ListClientsParams } from '../../lib/clients-api';
-import { clientImportApi } from '../../lib/client-import-api';
+import { clientImportApi, type ImportJob, type ImportJobStatus } from '../../lib/client-import-api';
 import { brandColors } from '../../theme';
 import { ClientDetailDrawer } from './ClientDetailDrawer';
 import { AgentInfoDetailDrawer } from './AgentInfoDetailDrawer';
@@ -76,6 +79,26 @@ function formatDate(v: string | null): string {
   return v.slice(0, 10);
 }
 
+/** 格式化为 YYYY-MM-DD HH:mm，导入记录需要精确到分钟以便区分同一天多批次 */
+function formatDateTime(v: string | null): string {
+  if (!v) return '—';
+  return v.slice(0, 16).replace('T', ' ');
+}
+
+const IMPORT_JOB_STATUS_LABELS: Record<ImportJobStatus, string> = {
+  QUEUED: '排队中',
+  PROCESSING: '处理中',
+  DONE: '已完成',
+  FAILED: '失败',
+};
+
+const IMPORT_JOB_STATUS_COLOR: Record<ImportJobStatus, string> = {
+  QUEUED: brandColors.body,
+  PROCESSING: brandColors.primary,
+  DONE: brandColors.success,
+  FAILED: '#ff4d4f',
+};
+
 interface CertificateTarget {
   clientName: string;
   agentInfo: AgentInfoSummary;
@@ -105,6 +128,13 @@ export function ClientListPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+  const [importRecordsOpen, setImportRecordsOpen] = useState(false);
+  const [importRecords, setImportRecords] = useState<ImportJob[]>([]);
+  const [importRecordsLoading, setImportRecordsLoading] = useState(false);
+  const [importRecordsTotal, setImportRecordsTotal] = useState(0);
+  const [importRecordsPage, setImportRecordsPage] = useState(1);
+  const [importRecordsPageSize, setImportRecordsPageSize] = useState(10);
+  const [importRecordsStatus, setImportRecordsStatus] = useState<ImportJobStatus | undefined>();
   // 已提交的筛选条件：仅在点击"查询"按钮（表单 onFinish）时更新，翻页/切页大小时复用
   const [filters, setFilters] = useState<Omit<ListClientsParams, 'page' | 'pageSize'>>({});
 
@@ -226,6 +256,40 @@ export function ClientListPage() {
     void load({ page: pagination.current, pageSize: pagination.pageSize });
   };
 
+  /** 加载"导入记录"抽屉内的批次列表，支持状态筛选与分页 */
+  const loadImportRecords = useCallback(
+    async (overrides?: { page?: number; pageSize?: number; status?: ImportJobStatus }) => {
+      const targetPage = overrides?.page ?? importRecordsPage;
+      const targetPageSize = overrides?.pageSize ?? importRecordsPageSize;
+      const targetStatus = 'status' in (overrides ?? {}) ? overrides?.status : importRecordsStatus;
+      setImportRecordsLoading(true);
+      try {
+        const result = await clientImportApi.list({
+          page: targetPage,
+          pageSize: targetPageSize,
+          status: targetStatus,
+        });
+        setImportRecords(result.items);
+        setImportRecordsTotal(result.total);
+        setImportRecordsPage(result.page);
+        setImportRecordsPageSize(result.pageSize);
+      } catch {
+        void message.error('导入记录加载失败');
+      } finally {
+        setImportRecordsLoading(false);
+      }
+    },
+    [importRecordsPage, importRecordsPageSize, importRecordsStatus],
+  );
+
+  useEffect(() => {
+    if (importRecordsOpen) {
+      void loadImportRecords({ page: 1 });
+    }
+    // 打开抽屉时重新拉取第一页，筛选条件变化由下方 Select 的 onChange 显式触发，避免重复请求
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importRecordsOpen]);
+
   /** 表单内所有查询条件填写/选择完毕后，点击"查询"统一发起一次请求 */
   const handleSearch = (values: SearchFormValues) => {
     const nextFilters: Omit<ListClientsParams, 'page' | 'pageSize'> = {
@@ -332,6 +396,9 @@ export function ClientListPage() {
               <Button icon={<UploadOutlined />} onClick={() => setImportModalOpen(true)}>
                 批量导入
               </Button>
+              <Button icon={<HistoryOutlined />} onClick={() => setImportRecordsOpen(true)}>
+                导入记录
+              </Button>
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -407,6 +474,121 @@ export function ClientListPage() {
           <p className="ant-upload-hint">ZIP 内应包含多个按官方模板填写的授权客户信息 Excel 文件</p>
         </Upload.Dragger>
       </Modal>
+
+      <Drawer
+        title="导入记录"
+        placement="right"
+        width={720}
+        open={importRecordsOpen}
+        onClose={() => setImportRecordsOpen(false)}
+        destroyOnClose
+        extra={
+          <Space>
+            <span style={{ color: brandColors.body }}>状态</span>
+            <Select<ImportJobStatus | 'ALL'>
+              style={{ width: 120 }}
+              value={importRecordsStatus ?? 'ALL'}
+              onChange={(v) => {
+                const status = v === 'ALL' ? undefined : v;
+                setImportRecordsStatus(status);
+                void loadImportRecords({ page: 1, status });
+              }}
+              options={[
+                { value: 'ALL', label: '全部' },
+                { value: 'QUEUED', label: IMPORT_JOB_STATUS_LABELS.QUEUED },
+                { value: 'PROCESSING', label: IMPORT_JOB_STATUS_LABELS.PROCESSING },
+                { value: 'DONE', label: IMPORT_JOB_STATUS_LABELS.DONE },
+                { value: 'FAILED', label: IMPORT_JOB_STATUS_LABELS.FAILED },
+              ]}
+            />
+            <Button
+              icon={<ReloadOutlined />}
+              loading={importRecordsLoading}
+              onClick={() => void loadImportRecords()}
+            >
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        <Table<ImportJob>
+          rowKey="id"
+          loading={importRecordsLoading}
+          dataSource={importRecords}
+          size="middle"
+          onChange={(pagination) =>
+            void loadImportRecords({ page: pagination.current, pageSize: pagination.pageSize })
+          }
+          pagination={{
+            current: importRecordsPage,
+            pageSize: importRecordsPageSize,
+            total: importRecordsTotal,
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+          columns={[
+            {
+              title: '创建时间',
+              dataIndex: 'createdAt',
+              width: 150,
+              render: (v: string) => formatDateTime(v),
+            },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              width: 90,
+              render: (v: ImportJobStatus) => (
+                <Tag color={IMPORT_JOB_STATUS_COLOR[v]}>{IMPORT_JOB_STATUS_LABELS[v]}</Tag>
+              ),
+            },
+            {
+              title: '总数',
+              dataIndex: 'totalCount',
+              width: 70,
+              align: 'center',
+            },
+            {
+              title: '成功',
+              dataIndex: 'successCount',
+              width: 70,
+              align: 'center',
+              render: (v: number) => <span style={{ color: brandColors.success }}>{v}</span>,
+            },
+            {
+              title: '待核对',
+              dataIndex: 'reviewCount',
+              width: 90,
+              align: 'center',
+              render: (v: number) => (v > 0 ? <Badge count={v} color={brandColors.warning} /> : v),
+            },
+            {
+              title: '失败',
+              dataIndex: 'failedCount',
+              width: 70,
+              align: 'center',
+              render: (v: number) => (v > 0 ? <Badge count={v} color="#ff4d4f" /> : v),
+            },
+            {
+              title: '操作',
+              key: 'action',
+              width: 80,
+              fixed: 'right',
+              render: (_, record) => (
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => {
+                    setImportRecordsOpen(false);
+                    navigate(`/clients/import/${record.id}`);
+                  }}
+                >
+                  查看
+                </Button>
+              ),
+            },
+          ]}
+          scroll={{ x: 620 }}
+        />
+      </Drawer>
 
       <Card bordered={false} className="clients-table-card">
         <Table<ClientListItem>

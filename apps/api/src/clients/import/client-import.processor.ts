@@ -24,6 +24,21 @@ import { RowValidatorService } from './row-validator.service';
 const ITEM_CONCURRENCY = 3;
 
 /**
+ * 图片 mimetype -> 扩展名：批量导入的证件图片没有真实"上传文件名"（来自 Excel 内嵌图片），
+ * 落盘扩展名必须由 mimetype 推断，不能直接拼接 xlsx 文件名（否则 `path.extname()` 会取到
+ * ".xlsx-business-license" 这种非图片扩展名，导致前端按文件而非图片渲染，见排查记录）。
+ */
+const MIME_TO_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+};
+
+function imageOriginalName(mimetype: string, suffix: string): string {
+  const ext = MIME_TO_EXT[mimetype] ?? 'jpg';
+  return `${suffix}.${ext}`;
+}
+
+/**
  * 批量导入 BullMQ Worker：解压 ZIP → 逐文件解析 Excel + OCR + 校验 → 落库，
  * 维护 `ClientImportJob`/`ClientImportItem` 状态机（第 6.3 节）。
  */
@@ -164,7 +179,10 @@ export class ClientImportProcessor implements OnModuleInit, OnModuleDestroy {
         type: AttachmentType.BUSINESS_LICENSE,
         buffer: parsed.images.businessLicense.buffer,
         mimetype: parsed.images.businessLicense.mimetype,
-        originalName: `${file.fileName}-business-license`,
+        originalName: imageOriginalName(
+          parsed.images.businessLicense.mimetype,
+          `${file.fileName}-business-license`,
+        ),
       });
     }
     if (parsed.images.idCardFront) {
@@ -172,7 +190,10 @@ export class ClientImportProcessor implements OnModuleInit, OnModuleDestroy {
         type: AttachmentType.ID_CARD_FRONT,
         buffer: parsed.images.idCardFront.buffer,
         mimetype: parsed.images.idCardFront.mimetype,
-        originalName: `${file.fileName}-id-front`,
+        originalName: imageOriginalName(
+          parsed.images.idCardFront.mimetype,
+          `${file.fileName}-id-front`,
+        ),
       });
     }
     if (parsed.images.idCardBack) {
@@ -180,7 +201,10 @@ export class ClientImportProcessor implements OnModuleInit, OnModuleDestroy {
         type: AttachmentType.ID_CARD_BACK,
         buffer: parsed.images.idCardBack.buffer,
         mimetype: parsed.images.idCardBack.mimetype,
-        originalName: `${file.fileName}-id-back`,
+        originalName: imageOriginalName(
+          parsed.images.idCardBack.mimetype,
+          `${file.fileName}-id-back`,
+        ),
       });
     }
 
