@@ -16,9 +16,10 @@
 
 未完成 / 待验证：
 
-- ⏳ `services/ocr-service/Dockerfile` 已加上镜像源 + 缓存加速（见下方新增小节），但完整构建（含下载 RapidOCR 模型那一步）耗时仍然较长，本地未等待到最终跑完，需要后续找一段整块时间验证到底。
-- ✅ `services/doc-service/Dockerfile` 已本地构建成功（约 3.5 分钟，主要卡在依赖下载，见下方加速方案）。
-- ⏳ 没有跑过 `docker compose up -d --build` 完整拉起全部 5 个容器联调（尤其 `api` 连接宿主机 MySQL/Redis 的 `host.docker.internal` 网络配置，需要在真实 CVM 或本机装好原生 MySQL/Redis 后验证）。
+- ✅ `docker compose config` 已重新跑通校验（补了临时 `.env` / `apps/api/.env.production` 走一遍变量插值），输出的 5 个服务定义、`extra_hosts`、`volumes` 均符合预期，验证后已删除临时文件，未提交。
+- ⏳ **`services/ocr-service/Dockerfile` 完整构建（含下载 RapidOCR 模型）仍未跑通**：本次尝试时发现当前沙箱环境访问不了 `registry-1.docker.io`（`docker pull hello-world` 直接超时：`dial tcp ...:443: i/o timeout`），说明卡点已经不是「耗时长」而是**当前开发环境没有可用的公网出口**，需要换到一台能正常拉取 Docker Hub 镜像的机器（或配置好镜像加速器/代理）上重新验证这一步。
+- ✅ `services/doc-service/Dockerfile` 已本地构建成功（约 3.5 分钟，主要卡在依赖下载，见下方加速方案）——注意这是在此前网络可用的环境里验证的，本次沙箱同样受限，未重新跑。
+- ⏳ 没有跑过 `docker compose up -d --build` 完整拉起全部 5 个容器联调（尤其 `api` 连接宿主机 MySQL/Redis 的 `host.docker.internal` 网络配置，需要在真实 CVM 或本机装好原生 MySQL/Redis 后验证），本次同样受限于沙箱无法拉取基础镜像，未能推进。
 - ⏳ 没有在真实域名 + 服务器环境验证 Caddy 自动签发 HTTPS 证书这一步（`apps/web/Caddyfile` 里的 `your-domain.com` 需要按实际域名替换）。
 - ⏳ 宿主机 MySQL/Redis 网络放开到 Docker 网桥网段（`bind-address`、防火墙规则）的步骤仅是文档描述，未在真实服务器上执行验证。
 
