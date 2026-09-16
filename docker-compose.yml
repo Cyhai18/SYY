@@ -1,0 +1,55 @@
+# MySQL/Redis 不在这里编排，按 docs/tencent-cloud-deploy.md 原生装在宿主机上，
+# api 容器通过 extra_hosts 的 host.docker.internal 访问宿主机端口。
+# 完整说明见 docs/docker-deploy.md。
+
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+
+  ocr-service:
+    build: ./services/ocr-service
+    restart: unless-stopped
+    # 模型已在构建期烘焙进镜像（见 services/ocr-service/Dockerfile），此处不需要再挂模型缓存 volume
+
+  doc-service:
+    build: ./services/doc-service
+    restart: unless-stopped
+    environment:
+      GOTENBERG_URL: http://gotenberg:3000
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on: [ocr-service, doc-service]
+    env_file: apps/api/.env.production
+    extra_hosts:
+      - 'host.docker.internal:host-gateway' # 让容器能访问宿主机上原生安装的 MySQL/Redis
+    environment:
+      DATABASE_URL: mysql://funtax:${MYSQL_PASSWORD}@host.docker.internal:3306/funtax
+      REDIS_URL: redis://host.docker.internal:6379
+      OCR_SERVICE_URL: http://ocr-service:8000
+      DOC_SERVICE_URL: http://doc-service:8001
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads-data:/app/uploads
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - caddy-data:/data # Caddy 自动签发/续期的证书存这里，容器重建不丢
+      - caddy-config:/config
+
+volumes:
+  uploads-data:
+  caddy-data:
+  caddy-config:

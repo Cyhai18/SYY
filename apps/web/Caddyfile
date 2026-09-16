@@ -1,0 +1,16 @@
+# 部署前把 your-domain.com 换成实际域名（需先在 DNS 解析到 CVM 公网 IP）。
+# 本地/无域名调试时可以把第一行换成 `:80 {` 跳过自动 HTTPS 证书申请。
+# 详见 docs/docker-deploy.md 六、HTTPS。
+your-domain.com {
+    encode gzip
+    root * /usr/share/caddy
+    file_server
+
+    # SPA fallback：非静态资源的路径都回退到 index.html，交给前端路由处理
+    try_files {path} /index.html
+
+    # /api 反代到 api 容器（容器间用 compose 服务名 api 互相访问）
+    handle /api/* {
+        reverse_proxy api:3000
+    }
+}
