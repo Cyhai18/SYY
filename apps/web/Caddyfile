@@ -1,16 +1,43 @@
 # 部署前把 your-domain.com 换成实际域名（需先在 DNS 解析到 CVM 公网 IP）。
-# 本地/无域名调试时可以把第一行换成 `:80 {` 跳过自动 HTTPS 证书申请。
-# 详见 docs/docker-deploy.md 六、HTTPS。
-your-domain.com {
-    encode gzip
-    root * /usr/share/caddy
-    file_server
 
-    # SPA fallback：非静态资源的路径都回退到 index.html，交给前端路由处理
-    try_files {path} /index.html
+# 本地/无域名调试时可以把第一行换成 `:80 {` 跳过自动 HTTPS 证书申请。
+
+# 详见 docs/docker-deploy.md 六、HTTPS。
+
+# your-domain.com {
+#     encode gzip
+#
+#     # /api 反代到 api 容器（容器间用 compose 服务名 api 互相访问）
+#     # 必须放在前面用 handle 显式分流，否则下面的 file_server 会按 Caddy 默认指令顺序
+#     # 先于 handle 执行，拦截所有非 GET/HEAD 请求（如 POST）并返回 405
+#     handle /api/* {
+#         reverse_proxy api:3000
+#     }
+#
+#     # 其余请求交给静态文件 + SPA fallback
+#     handle {
+#         root * /usr/share/caddy
+#         file_server
+#         try_files {path} /index.html
+#     }
+# }
+
+# 当前无域名，直接用 IP+80 访问；有域名后注释这段、取消注释上面那段即可切换
+
+:80 {
+    encode gzip
 
     # /api 反代到 api 容器（容器间用 compose 服务名 api 互相访问）
+    # 必须放在前面用 handle 显式分流，否则下面的 file_server 会按 Caddy 默认指令顺序
+    # 先于 handle 执行，拦截所有非 GET/HEAD 请求（如 POST）并返回 405
     handle /api/* {
         reverse_proxy api:3000
+    }
+
+    # 其余请求交给静态文件 + SPA fallback
+    handle {
+        root * /usr/share/caddy
+        file_server
+        try_files {path} /index.html
     }
 }

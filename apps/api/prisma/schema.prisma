@@ -29,9 +29,9 @@ model User {
   actionLogs    ActionLog[]
   refreshTokens RefreshToken[]
 
-  ownedClients   Client[] @relation("ClientOwner")
-  createdClients Client[] @relation("ClientCreatedBy")
-  updatedClients Client[] @relation("ClientUpdatedBy")
+  ownedClients   Client[]          @relation("ClientOwner")
+  createdClients Client[]          @relation("ClientCreatedBy")
+  updatedClients Client[]          @relation("ClientUpdatedBy")
   certificates   Certificate[]
   importJobs     ClientImportJob[]
   trackedClients ClientTracker[]
@@ -119,16 +119,16 @@ enum AttachmentType {
 
 // 授权客户主表
 model Client {
-  id         String       @id @default(uuid())
-  clientType ClientType
-  phone      String
-  email      String?
-  remark     String?      @db.Text
-  status     ClientStatus @default(PENDING_REVIEW)
+  id               String       @id @default(uuid())
+  clientType       ClientType
+  phone            String
+  email            String?
+  remark           String?      @db.Text
+  status           ClientStatus @default(PENDING_REVIEW)
   // 客户唯一标识：公司类型存统一社会信用代码，个人类型存身份证号。
   // 提交时与 CompanyInfo.creditCode（仅公司必填）/ LegalRepresentative.idNumber（仅个人必填）保持一致，
   // 但查重/唯一性统一收口在这一列，不再依赖按 clientType 分支去 join 两张子表。
-  uniqueIdentifier String @unique
+  uniqueIdentifier String       @unique
 
   ownerId String // 负责该客户的内部员工
   owner   User   @relation("ClientOwner", fields: [ownerId], references: [id])
@@ -171,19 +171,19 @@ model ClientTracker {
 
 // 公司主体信息（仅公司类型客户拥有该记录内容；个人类型客户唯一标识见 Client.uniqueIdentifier）
 model CompanyInfo {
-  id         String  @id @default(uuid())
-  clientId   String  @unique
+  id            String  @id @default(uuid())
+  clientId      String  @unique
   // 统一社会信用代码，仅公司类型客户必填；与 Client.uniqueIdentifier 保持一致
-  creditCode String?
-  nameCn     String?
-  nameEn     String?
-  addressCn  String? @db.Text
-  provinceEn String?
-  cityEn     String?
-  postalCode String?
-  addressEn  String? @db.Text // 不含国家/省/市/邮编
+  creditCode    String?
+  nameCn        String?
+  nameEn        String?
+  addressCn     String? @db.Text
+  provinceEn    String?
+  cityEn        String?
+  postalCode    String?
+  addressEn     String? @db.Text // 不含国家/省/市/邮编
   contactPerson String? // 联系人，仅公司类型客户必填
-  client     Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client        Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([nameEn])
 }
@@ -237,16 +237,16 @@ model AgentInfo {
 
 // 店铺信息（1:N 归属代理信息；clientId 冗余自 agentInfo.clientId，便于按客户查询；1:N 关联产品）
 model Shop {
-  id             String      @id @default(uuid())
+  id             String    @id @default(uuid())
   agentInfoId    String
   clientId       String
   platform       Platform
   shopId         String? // 平台方店铺 ID
   shopName       String
-  shopUrl        String      @db.Text
-  brandNames     String      @db.Text // 逗号分隔，无品牌填店铺名
+  shopUrl        String    @db.Text
+  brandNames     String    @db.Text // 逗号分隔，无品牌填店铺名
   mainCategoryEn String
-  agentInfo      AgentInfo   @relation(fields: [agentInfoId], references: [id], onDelete: Cascade)
+  agentInfo      AgentInfo @relation(fields: [agentInfoId], references: [id], onDelete: Cascade)
   products       Product[]
 
   createdAt DateTime @default(now())
@@ -339,17 +339,17 @@ enum ImportItemStatus {
 
 // 一次 ZIP 上传 = 一个批次
 model ClientImportJob {
-  id           String          @id @default(uuid())
-  status       ImportJobStatus @default(QUEUED)
+  id           String             @id @default(uuid())
+  status       ImportJobStatus    @default(QUEUED)
   fileName     String // 原始 ZIP 文件名，便于用户核对
-  totalCount   Int             @default(0) // ZIP 内识别到的有效 .xlsx 数量
-  successCount Int             @default(0)
-  reviewCount  Int             @default(0)
-  failedCount  Int             @default(0)
+  totalCount   Int                @default(0) // ZIP 内识别到的有效 .xlsx 数量
+  successCount Int                @default(0)
+  reviewCount  Int                @default(0)
+  failedCount  Int                @default(0)
   createdById  String
-  createdBy    User            @relation(fields: [createdById], references: [id])
+  createdBy    User               @relation(fields: [createdById], references: [id])
   items        ClientImportItem[]
-  createdAt    DateTime        @default(now())
+  createdAt    DateTime           @default(now())
   finishedAt   DateTime?
 
   @@index([createdById])

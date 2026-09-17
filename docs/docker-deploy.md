@@ -85,6 +85,9 @@ RUN pnpm --filter @funtax/api build
 # 注意：pnpm v10 默认要求 workspace 开启 inject-workspace-packages=true 才能直接 deploy，
 # 本仓库未开启该选项，实测需要加 --legacy 走旧版 deploy 行为，效果等价（已在本机验证构建成功）
 RUN pnpm --filter @funtax/api deploy --prod --legacy /out/api
+# pnpm deploy 不会带上 builder 阶段生成的 .prisma/client（已知问题），
+# 否则运行时报 Cannot find module '.prisma/client/default'，需在产物目录里重新生成一次
+RUN cd /out/api && pnpm dlx prisma@7.9.1 generate
 
 FROM node:20.19-slim
 WORKDIR /app
@@ -309,11 +312,17 @@ volumes:
   caddy-config:
 ```
 
-对应地，宿主机的 MySQL/Redis 必须监听 `0.0.0.0`（或至少监听 Docker 网桥 `docker0` 的网关地址，
-默认 `172.17.0.1`），而不是只监听 `127.0.0.1`——原生部署方案里为了安全把 MySQL/Redis 绑定在
-`127.0.0.1`，这里为了让容器能访问，需要放开到 Docker 网桥网段，但**不能**直接对公网 0.0.0.0
-不做任何限制，做法是用 CVM 防火墙/`iptables` 只放行 Docker 网桥网段（`172.17.0.0/16`）访问
-3306/6379，公网安全组仍然完全不开放这两个端口。
+对应地，宿主机的 MySQL/Redis 必须监听 `0.0.0.0`（或至少监听 Docker 网桥的网关地址），而不是只监听
+`127.0.0.1`——原生部署方案里为了安全把 MySQL/Redis 绑定在 `127.0.0.1`，这里为了让容器能访问，需要
+放开到 Docker 网桥网段，但**不能**直接对公网 0.0.0.0 不做任何限制，做法是用 CVM 防火墙/`iptables`
+只放行 Docker 网桥网段访问 3306/6379，公网安全组仍然完全不开放这两个端口。
+
+> **注意**：`docker-compose.yml` 没有手动指定 `subnet`，Docker 会从默认地址池
+> （`172.17.0.0/16`、`172.18.0.0/16`……直到 `172.31.0.0/16`）按顺序挑一个未占用的网段分配给这个
+> compose 项目的自定义网络，如果宿主机上已经有其他 Docker 网络占用了 `172.17.0.0/16`，这个项目就
+> 会落到 `172.18.x` 甚至更靠后的网段，**不一定是 172.17.x**。因此 MySQL 授权和防火墙规则不要写死
+> `172.17.0.0/16`，应该放宽到 `172.16.0.0/12`（覆盖 Docker 默认地址池会用到的全部网段），或者在
+> `docker-compose.yml` 里显式指定一个固定 `subnet` 后再按那个网段授权。
 
 ## 五、部署步骤（在 CVM 上）
 
@@ -327,12 +336,14 @@ apt install -y docker-compose-plugin
 # 2. 建库建用户（原生部署方案同款步骤），并放开 Docker 网桥网段访问权限
 mysql -u root -p <<'SQL'
 CREATE DATABASE funtax CHARACTER SET utf8mb4;
-CREATE USER 'funtax'@'172.17.0.0/255.255.0.0' IDENTIFIED BY '<你的密码>';
-GRANT ALL PRIVILEGES ON funtax.* TO 'funtax'@'172.17.0.0/255.255.0.0';
+CREATE USER 'funtax'@'172.16.0.0/255.240.0.0' IDENTIFIED BY '<你的密码>';
+GRANT ALL PRIVILEGES ON funtax.* TO 'funtax'@'172.16.0.0/255.240.0.0';
 FLUSH PRIVILEGES;
 SQL
-# 修改 /etc/mysql/mysql.conf.d/mysqld.cnf 的 bind-address 为 0.0.0.0（或 172.17.0.1），
-# 修改 /etc/redis/redis.conf 的 bind 同理，然后用防火墙只放行 172.17.0.0/16 访问 3306/6379
+# 修改 /etc/mysql/mysql.conf.d/mysqld.cnf 的 bind-address 为 0.0.0.0，
+# 修改 /etc/redis/redis.conf 的 bind 同理，然后用防火墙只放行 172.16.0.0/12 访问 3306/6379
+# （用 172.16.0.0/12 而不是 172.17.0.0/16，是因为 compose 没指定 subnet 时 Docker 会按默认
+# 地址池顺序分配网段，实际不一定落在 172.17.x，见上方「四、docker-compose.yml」的说明）
 # （具体见「七、数据库/Redis：数据库/Redis 用宿主机原生部署」）
 systemctl restart mysql redis-server
 
@@ -405,7 +416,7 @@ HTTP-01/TLS-ALPN-01 挑战申请证书；本地测试没有真实域名时可以
 
 **落地要点**：
 
-- **网络配置**：MySQL 的 `bind-address`、Redis 的 `bind` 从 `127.0.0.1` 改为 `0.0.0.0`（或更精确地绑定 Docker 网桥地址 `172.17.0.1`），MySQL 用户授权改成 `'funtax'@'172.17.0.0/255.255.0.0'` 而不是 `'funtax'@'localhost'`；同时用 `ufw`/`iptables`/腾讯云安全组确保 3306/6379 只对 `172.17.0.0/16`（Docker 默认网桥网段）开放，公网安全组完全不放行这两个端口，避免放宽监听地址之后意外对公网暴露。
+- **网络配置**：MySQL 的 `bind-address`、Redis 的 `bind` 从 `127.0.0.1` 改为 `0.0.0.0`，MySQL 用户授权改成 `'funtax'@'172.16.0.0/255.240.0.0'` 而不是 `'funtax'@'localhost'`；同时用 `ufw`/`iptables`/腾讯云安全组确保 3306/6379 只对 `172.16.0.0/12`（Docker 默认地址池可能分配到的网段范围）开放，公网安全组完全不放行这两个端口，避免放宽监听地址之后意外对公网暴露。注意 compose 没指定 `subnet` 时实际分到的网段不一定是 `172.17.x`（取决于宿主机上已有多少个 Docker 网络），所以授权和防火墙都用更宽的 `/12` 网段，不要写死 `/16`。
 - **`host.docker.internal` 在 Linux 上需要显式声明**：不像 Docker Desktop（Mac/Windows）默认自带这个域名解析，Linux 上的 `docker compose` 要在服务里加 `extra_hosts: - "host.docker.internal:host-gateway"`（Docker Compose 1.29+/Docker Engine 20.10+ 支持 `host-gateway` 特殊值，会自动解析成宿主机在该容器网络里的网关 IP），已经写进上面的 compose 示例。
 - **备份方式与原生部署一致**：继续用 `docs/tencent-cloud-deploy.md` 里的 `mysqldump` + 定时任务同步到腾讯云 COS 的方案，不需要额外为容器化场景重新设计备份逻辑。
 - **升级路径**：如果以后业务量增长到需要高可用/自动主备切换，再迁移到云托管版，只需要改 `apps/api/.env.production` 里的 `DATABASE_URL`/`REDIS_URL` 指向云数据库内网地址，去掉 `extra_hosts` 配置，`api` 应用代码不需要改动。

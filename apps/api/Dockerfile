@@ -17,6 +17,11 @@ RUN pnpm --filter @funtax/api build
 # pnpm v10 默认要求 workspace 设置 inject-workspace-packages=true 才能 deploy，
 # 本仓库没有开启该选项，用 --legacy 走旧版 deploy 行为（打包解析后的生产依赖，效果等价）
 RUN pnpm --filter @funtax/api deploy --prod --legacy /out/api
+# `pnpm deploy` 不会把 builder 阶段 `prisma generate` 生成的 `.prisma/client`
+# 一并带进裁剪后的 node_modules（pnpm 已知问题：生成产物不在 lockfile 解析范围内），
+# 导致运行时报 `Cannot find module '.prisma/client/default'`。在产物目录里针对
+# 已就位的 @prisma/client 重新生成一次，确保 client 落在运行时实际会解析到的位置。
+RUN cd /out/api && pnpm dlx prisma@7.9.1 generate
 
 FROM node:20.19-slim
 WORKDIR /app
