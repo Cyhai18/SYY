@@ -181,7 +181,7 @@ stateDiagram-v2
 | | `ClientImportItem.status`（导入项状态） | `Client.status`（客户业务状态） |
 | --- | --- | --- |
 | 所处阶段 | `Client` 记录**尚未创建**，还在"这份数据能不能安全建档"的处理过程中 | `Client` 记录**已经创建成功**之后的业务生命周期 |
-| 回答的问题 | 这份待导入数据字段完不完整、OCR 识别对不对、是不是疑似重复？ | 这个已存在的客户，当前处于什么业务状态（`NORMAL`/`PENDING_RENEWAL`/`PENDING_REVIEW`）？ |
+| 回答的问题 | 这份待导入数据字段完不完整、OCR 识别对不对、是不是疑似重复？ | 这个已存在的客户，当前处于什么业务状态（`NORMAL`/`PENDING_REVIEW`/`INACTIVE`）？ |
 | `NEEDS_REVIEW` 触发原因 | 必填字段缺失、OCR 未识别/置信度低、格式校验位不通过、疑似重复客户等（见第 8 节） | 不适用，`Client` 一旦创建，默认即为 `PENDING_REVIEW`，与导入过程无关 |
 | 时间线关系 | 在前 | 在后：导入项核对通过 → 调用 `createClient()` → 生成 `Client` 记录 → 该记录状态自然为 `PENDING_REVIEW` |
 

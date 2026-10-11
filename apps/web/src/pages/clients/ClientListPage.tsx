@@ -19,26 +19,33 @@ import {
 } from 'antd';
 import type { TablePaginationConfig } from 'antd/es/table';
 import {
+  DollarCircleOutlined,
   DownloadOutlined,
+  ExportOutlined,
   EyeOutlined,
   FilePdfOutlined,
   FileProtectOutlined,
   HistoryOutlined,
+  ImportOutlined,
   InboxOutlined,
   PlusOutlined,
+  RedoOutlined,
   ReloadOutlined,
   SearchOutlined,
+  SyncOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
   AGENT_COMPANY_LABELS,
   AGENT_COUNTRY_LABELS,
+  CERTIFICATE_SERVICE_STATUS_LABELS,
   CERTIFICATE_STATUS_LABELS,
   CLIENT_STATUS_LABELS,
   CLIENT_TYPE_LABELS,
   type AgentInfoSummary,
   type CertificateRecord,
+  type CertificateStatusFilter,
   type ClientListItem,
   type ClientStatus,
   type ClientType,
@@ -54,15 +61,15 @@ const { RangePicker } = DatePicker;
 interface SearchFormValues {
   keyword?: string;
   clientType?: ClientType;
-  status?: ClientStatus;
+  certificateStatus?: CertificateStatusFilter;
   agentCountry?: ListClientsParams['agentCountry'];
   submittedRange?: Parameters<NonNullable<ComponentProps<typeof RangePicker>['onChange']>>[0];
 }
 
 const STATUS_COLOR: Record<ClientStatus, string> = {
   NORMAL: brandColors.success,
-  PENDING_RENEWAL: brandColors.warning,
   PENDING_REVIEW: brandColors.body,
+  INACTIVE: 'error',
 };
 
 const CERTIFICATE_STATUS_COLOR: Record<AgentInfoSummary['certificateStatus'], string> = {
@@ -71,6 +78,16 @@ const CERTIFICATE_STATUS_COLOR: Record<AgentInfoSummary['certificateStatus'], st
   GENERATING: brandColors.warning,
   SUCCESS: brandColors.success,
   FAILED: 'error',
+};
+
+/** 证书生成成功后，展示的是服务有效期派生状态（生效中/待续费/失效），颜色与生成流程状态区分开。 */
+const CERTIFICATE_SERVICE_STATUS_COLOR: Record<
+  NonNullable<AgentInfoSummary['serviceStatus']>,
+  string
+> = {
+  ACTIVE: brandColors.success,
+  PENDING_RENEWAL: brandColors.warning,
+  EXPIRED: 'error',
 };
 
 /** 格式化为 YYYY-MM-DD，无值时显示占位符 */
@@ -128,6 +145,7 @@ export function ClientListPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [importRecordsOpen, setImportRecordsOpen] = useState(false);
   const [importRecords, setImportRecords] = useState<ImportJob[]>([]);
   const [importRecordsLoading, setImportRecordsLoading] = useState(false);
@@ -178,6 +196,42 @@ export function ClientListPage() {
     [load],
   );
 
+  const handleRenewCertificate = useCallback(
+    (agentInfo: AgentInfoSummary) => {
+      const newEffectiveDate = new Date(agentInfo.expiresAt);
+      newEffectiveDate.setUTCDate(newEffectiveDate.getUTCDate() + 1);
+      const newExpiresAt = new Date(newEffectiveDate);
+      newExpiresAt.setUTCFullYear(newExpiresAt.getUTCFullYear() + agentInfo.agentYears);
+      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+      Modal.confirm({
+        title: '确认续费',
+        content: (
+          <div>
+            <div>新生效日期：{fmt(newEffectiveDate)}</div>
+            <div>新截止日期：{fmt(newExpiresAt)}</div>
+            <div>确认续费并重新生成证书？</div>
+          </div>
+        ),
+        okText: '确认续费',
+        cancelText: '取消',
+        onOk: async () => {
+          setGeneratingAgentInfoId(agentInfo.id);
+          try {
+            await clientsApi.renewCertificate(agentInfo.id);
+            void message.success('已提交续费任务，请稍候查看状态');
+            void load();
+          } catch {
+            void message.error('提交续费任务失败');
+          } finally {
+            setGeneratingAgentInfoId(null);
+          }
+        },
+      });
+    },
+    [load],
+  );
+
   const handleDownloadTemplate = useCallback(async () => {
     setDownloadingTemplate(true);
     try {
@@ -197,24 +251,48 @@ export function ClientListPage() {
     }
   }, []);
 
-  const handleDownloadCertificate = useCallback(async (certificateId: string) => {
-    setDownloadingId(certificateId);
+  const handleExport = useCallback(async () => {
+    setExporting(true);
     try {
-      const { blob, fileName } = await clientsApi.downloadCertificate(certificateId);
+      const { blob, fileName } = await clientsApi.exportClients(filters);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = fileName ?? `${certificateId}.pdf`;
+      a.download = fileName ?? '客户列表.xlsx';
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch {
-      void message.error('下载失败，请重试');
+    } catch (err) {
+      void message.error(err instanceof Error ? err.message : '导出失败，请重试');
     } finally {
-      setDownloadingId(null);
+      setExporting(false);
     }
-  }, []);
+  }, [filters]);
+
+  const handleDownloadCertificate = useCallback(
+    async (certificateId: string) => {
+      setDownloadingId(certificateId);
+      try {
+        const { blob } = await clientsApi.downloadCertificate(certificateId);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = certificateTarget
+          ? `${certificateTarget.clientName} - ${AGENT_COUNTRY_LABELS[certificateTarget.agentInfo.country]}代理.pdf`
+          : `${certificateId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch {
+        void message.error('下载失败，请重试');
+      } finally {
+        setDownloadingId(null);
+      }
+    },
+    [certificateTarget],
+  );
 
   /** 在线预览：借助浏览器内置 PDF 阅读器在新标签页打开，不触发下载。 */
   const handlePreviewCertificate = useCallback(async (certificateId: string) => {
@@ -295,7 +373,7 @@ export function ClientListPage() {
     const nextFilters: Omit<ListClientsParams, 'page' | 'pageSize'> = {
       keyword: values.keyword?.trim() || undefined,
       clientType: values.clientType,
-      status: values.status,
+      certificateStatus: values.certificateStatus,
       agentCountry: values.agentCountry,
       submittedFrom: values.submittedRange?.[0]?.format('YYYY-MM-DD'),
       submittedTo: values.submittedRange?.[1]?.format('YYYY-MM-DD'),
@@ -328,15 +406,17 @@ export function ClientListPage() {
                 }))}
               />
             </Form.Item>
-            <Form.Item name="status" label="状态" style={{ marginBottom: 0 }}>
+            <Form.Item name="certificateStatus" label="证书状态" style={{ marginBottom: 0 }}>
               <Select
                 allowClear
-                placeholder="请选择状态"
+                placeholder="请选择证书状态"
                 style={{ width: 140 }}
-                options={Object.entries(CLIENT_STATUS_LABELS).map(([value, label]) => ({
-                  value,
-                  label,
-                }))}
+                options={Object.entries(CERTIFICATE_SERVICE_STATUS_LABELS).map(
+                  ([value, label]) => ({
+                    value,
+                    label,
+                  }),
+                )}
               />
             </Form.Item>
             <Form.Item name="agentCountry" label="代理国家" style={{ marginBottom: 0 }}>
@@ -378,7 +458,7 @@ export function ClientListPage() {
                     page: 1,
                     keyword: undefined,
                     clientType: undefined,
-                    status: undefined,
+                    certificateStatus: undefined,
                     agentCountry: undefined,
                     submittedFrom: undefined,
                     submittedTo: undefined,
@@ -396,8 +476,12 @@ export function ClientListPage() {
               <Button icon={<UploadOutlined />} onClick={() => setImportModalOpen(true)}>
                 批量导入
               </Button>
-              <Button icon={<HistoryOutlined />} onClick={() => setImportRecordsOpen(true)}>
-                导入记录
+              <Button
+                icon={<ExportOutlined />}
+                loading={exporting}
+                onClick={() => void handleExport()}
+              >
+                导出
               </Button>
               <Button
                 type="primary"
@@ -420,7 +504,7 @@ export function ClientListPage() {
         }}
         destroyOnClose
         footer={
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Button
               type="link"
               size="small"
@@ -430,30 +514,36 @@ export function ClientListPage() {
             >
               下载批量导入模板
             </Button>
-            <Button
-              type="primary"
-              loading={importing}
-              disabled={!importFile}
-              onClick={async () => {
-                if (!importFile) {
-                  void message.warning('请先选择要上传的 ZIP 文件');
-                  return;
-                }
-                setImporting(true);
-                try {
-                  const job = await clientImportApi.create(importFile);
-                  setImportModalOpen(false);
-                  setImportFile(null);
-                  navigate(`/clients/import/${job.id}`);
-                } catch {
-                  void message.error('上传失败，请重试');
-                } finally {
-                  setImporting(false);
-                }
-              }}
-            >
-              开始导入
-            </Button>
+            <Space>
+              <Button icon={<HistoryOutlined />} onClick={() => setImportRecordsOpen(true)}>
+                导入记录
+              </Button>
+              <Button
+                type="primary"
+                icon={<ImportOutlined />}
+                loading={importing}
+                disabled={!importFile}
+                onClick={async () => {
+                  if (!importFile) {
+                    void message.warning('请先选择要上传的 ZIP 文件');
+                    return;
+                  }
+                  setImporting(true);
+                  try {
+                    const job = await clientImportApi.create(importFile);
+                    setImportModalOpen(false);
+                    setImportFile(null);
+                    navigate(`/clients/import/${job.id}`);
+                  } catch {
+                    void message.error('上传失败，请重试');
+                  } finally {
+                    setImporting(false);
+                  }
+                }}
+              >
+                开始导入
+              </Button>
+            </Space>
           </div>
         }
       >
@@ -705,6 +795,14 @@ export function ClientListPage() {
                       minWidth: 100,
                       render: (_, agentInfo) => {
                         const status = agentInfo.certificateStatus;
+                        // 生成成功后不再展示"已生成"这一过程态，改为展示生效中/待续费/失效三态服务状态
+                        if (status === 'SUCCESS' && agentInfo.serviceStatus) {
+                          return (
+                            <Tag color={CERTIFICATE_SERVICE_STATUS_COLOR[agentInfo.serviceStatus]}>
+                              {CERTIFICATE_SERVICE_STATUS_LABELS[agentInfo.serviceStatus]}
+                            </Tag>
+                          );
+                        }
                         const tag = (
                           <Tag color={CERTIFICATE_STATUS_COLOR[status]}>
                             {CERTIFICATE_STATUS_LABELS[status]}
@@ -725,11 +823,33 @@ export function ClientListPage() {
                         const isBusy =
                           agentInfo.certificateStatus === 'PENDING' ||
                           agentInfo.certificateStatus === 'GENERATING';
-                        const generateBtn = (
+                        const canRenew =
+                          agentInfo.serviceStatus === 'PENDING_RENEWAL' ||
+                          agentInfo.serviceStatus === 'EXPIRED';
+                        const generateBtn = canRenew ? (
                           <Button
                             type="link"
                             size="small"
-                            icon={<FilePdfOutlined />}
+                            icon={<DollarCircleOutlined />}
+                            disabled={isBusy}
+                            loading={generatingAgentInfoId === agentInfo.id}
+                            onClick={() => handleRenewCertificate(agentInfo)}
+                          >
+                            续费
+                          </Button>
+                        ) : (
+                          <Button
+                            type="link"
+                            size="small"
+                            icon={
+                              agentInfo.certificateStatus === 'FAILED' ? (
+                                <RedoOutlined />
+                              ) : agentInfo.certificateStatus === 'SUCCESS' ? (
+                                <SyncOutlined />
+                              ) : (
+                                <FilePdfOutlined />
+                              )
+                            }
                             disabled={isBusy}
                             loading={generatingAgentInfoId === agentInfo.id}
                             onClick={() => void handleGenerateCertificate(agentInfo.id)}

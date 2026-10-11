@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { AttachmentType, ClientStatus } from '@prisma/client';
+import type { Response } from 'express';
 import { ClientsService, type ClientAttachmentInput } from './clients.service';
 import { AppendAgentInfoDto, ClientPayloadDto } from './dto/client-payload.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
@@ -130,17 +132,44 @@ export class ClientsController {
   }
 
   /**
+   * 导出客户列表为 Excel，筛选口径与 `findAll` 一致（含权限隔离）。必须声明在 `:id` 路由之前，
+   * 否则 "export" 会被当成 :id 参数匹配掉。
+   */
+  @Get('export')
+  async export(
+    @Query() query: ListClientsDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.clientsService.exportClients(query, user);
+    const fileName = `客户列表_${this.formatExportTimestamp()}.xlsx`;
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+    res.send(buffer);
+  }
+
+  private formatExportTimestamp(): string {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  }
+
+  /**
    * 供证件 OCR 识别成功后触发的查重：统一信用代码/身份证号禁止手动编辑，只能由 OCR 识别得出，
    * 命中已存在客户时返回其 companyInfo/legalRepInfo 供前端回填表单，并切换到"追加代理信息"模式。
    * 必须声明在 `:id` 路由之前，否则会被 `:id` 吞掉。
    */
   @Get('duplicate-check')
-  async duplicateCheck(@Query('creditCode') creditCode?: string) {
+  async duplicateCheck(
+    @Query('creditCode') creditCode?: string,
+    @CurrentUser() user?: AuthenticatedUser,
+  ) {
     if (!creditCode?.trim()) {
       throw new BadRequestException('creditCode 不能为空');
     }
-    const client = await this.clientsService.checkDuplicate(creditCode.trim());
-    return { exists: !!client, client };
+    return this.clientsService.checkDuplicate(creditCode.trim(), user!);
   }
 
   @Get(':id')

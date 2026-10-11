@@ -54,12 +54,12 @@ export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
   INDIVIDUAL: '个人',
 };
 
-export type ClientStatus = 'NORMAL' | 'PENDING_RENEWAL' | 'PENDING_REVIEW';
+export type ClientStatus = 'NORMAL' | 'PENDING_REVIEW' | 'INACTIVE';
 
 export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
   NORMAL: '正常',
-  PENDING_RENEWAL: '待续费',
-  PENDING_REVIEW: '待审核',
+  PENDING_REVIEW: '审核中',
+  INACTIVE: '失效',
 };
 
 export type Platform =
@@ -168,14 +168,10 @@ export interface AgentInfoPayload {
   shops: ShopPayload[];
 }
 
-/** `checkDuplicate` 命中已存在客户时一并带出的已有代理信息摘要（不含店铺/产品明细），
- * 用于代理信息步骤禁用已占用的代理国家选项，避免重复追加同一国家。 */
-export interface DuplicateCheckAgentInfo {
-  country: AgentCountry;
-  agentCompany: AgentCompany;
-  expectedEffectiveDate: string;
-  agentYears: number;
-}
+/** `checkDuplicate` 命中已存在客户时一并带出的已有代理信息（含店铺/产品明细），
+ * 用于代理信息步骤：1）禁用已占用的代理国家选项，避免重复追加同一国家；
+ * 2）只读展示已有代理信息卡片，方便新增其他国家代理信息时参考/复用其店铺与产品数据。 */
+export interface DuplicateCheckAgentInfo extends AgentInfoPayload {}
 
 /**
  * `checkDuplicate` 查重接口命中已存在客户时返回的信息：统一信用代码/身份证号两个输入框
@@ -244,6 +240,55 @@ export const CERTIFICATE_STATUS_LABELS: Record<CertificateStatus, string> = {
   FAILED: '生成失败',
 };
 
+/**
+ * 证书生成成功（`CertificateStatus = SUCCESS`）后，基于 `expectedEffectiveDate`/`expiresAt`
+ * 与当前时间动态推导出的服务有效期状态，纯前端/后端计算得出，不落库、不依赖定时任务：
+ * - 在有效期内：生效中
+ * - 距到期不足 1 个月：待续费
+ * - 已过期：失效
+ * 未生成成功的代理信息（`NONE`/`PENDING`/`GENERATING`/`FAILED`）没有服务状态，仍展示生成流程状态。
+ */
+export type CertificateServiceStatus = 'ACTIVE' | 'PENDING_RENEWAL' | 'EXPIRED';
+
+export const CERTIFICATE_SERVICE_STATUS_LABELS: Record<CertificateServiceStatus, string> = {
+  ACTIVE: '生效中',
+  PENDING_RENEWAL: '待续费',
+  EXPIRED: '失效',
+};
+
+/** 到期前多少天进入"待续费"提醒窗口，见 `CERTIFICATE_SERVICE_STATUS_LABELS` 说明。 */
+export const CERTIFICATE_RENEWAL_WINDOW_DAYS = 30;
+
+/**
+ * 客户列表"状态"搜索框使用的证书状态枚举：用生成成功后的服务状态（生效中/待续费/失效）替换掉
+ * 单一的 `SUCCESS`（已生成），与列表页证书状态列的展示口径保持一致，便于按业务含义搜索。
+ */
+export type CertificateStatusFilter =
+  Exclude<CertificateStatus, 'SUCCESS'> | CertificateServiceStatus;
+
+export const CERTIFICATE_STATUS_FILTER_LABELS: Record<CertificateStatusFilter, string> = {
+  NONE: CERTIFICATE_STATUS_LABELS.NONE,
+  PENDING: CERTIFICATE_STATUS_LABELS.PENDING,
+  GENERATING: CERTIFICATE_STATUS_LABELS.GENERATING,
+  FAILED: CERTIFICATE_STATUS_LABELS.FAILED,
+  ACTIVE: CERTIFICATE_SERVICE_STATUS_LABELS.ACTIVE,
+  PENDING_RENEWAL: CERTIFICATE_SERVICE_STATUS_LABELS.PENDING_RENEWAL,
+  EXPIRED: CERTIFICATE_SERVICE_STATUS_LABELS.EXPIRED,
+};
+
+/** 纯函数：根据服务截止日期推导证书服务状态，供前端/后端共用同一套计算口径。 */
+export function deriveCertificateServiceStatus(
+  expiresAt: string | Date,
+  now: Date = new Date(),
+): CertificateServiceStatus {
+  const expiry = new Date(expiresAt).getTime();
+  const nowMs = now.getTime();
+  if (nowMs > expiry) return 'EXPIRED';
+  const renewalWindowStart = expiry - CERTIFICATE_RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  if (nowMs >= renewalWindowStart) return 'PENDING_RENEWAL';
+  return 'ACTIVE';
+}
+
 /** 某条代理信息的历史证书生成记录（仅归档成功的），供列表页"查看证书"弹窗展示 + 下载。 */
 export interface CertificateRecord {
   id: string;
@@ -260,9 +305,12 @@ export interface AgentInfoSummary {
   agentCompany: AgentCompany;
   expectedEffectiveDate: string;
   expiresAt: string;
+  agentYears: number;
   shopCount: number;
   certificateStatus: CertificateStatus;
   certificateError: string | null;
+  /** 仅当 certificateStatus === 'SUCCESS' 时由后端计算返回，其余状态为 null，由前端展示生成流程状态。 */
+  serviceStatus: CertificateServiceStatus | null;
 }
 
 /**

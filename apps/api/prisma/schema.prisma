@@ -76,8 +76,8 @@ enum ClientType {
 
 enum ClientStatus {
   NORMAL // 正常
-  PENDING_RENEWAL // 待续费
-  PENDING_REVIEW // 待审核
+  PENDING_REVIEW // 审核中
+  INACTIVE // 失效（当前暂不定义由谁/何时触发，仅先预留该枚举值）
   // 后续新增状态直接加枚举值 + migration，扩展方式同 Role
 }
 

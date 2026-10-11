@@ -1,7 +1,13 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Button, Card, Empty, Popover } from 'antd';
 import { CheckCircleFilled, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { AGENT_COUNTRY_COMPANIES, AGENT_COUNTRY_LABELS, type AgentCountry } from '@funtax/shared';
+import {
+  AGENT_COUNTRY_COMPANIES,
+  AGENT_COUNTRY_LABELS,
+  type AgentCountry,
+  type DuplicateCheckAgentInfo,
+  type ShopPayload,
+} from '@funtax/shared';
 import {
   nextKey,
   useClientWizardStore,
@@ -19,24 +25,42 @@ const AGENT_COUNTRY_FLAGS: Record<AgentCountry, string> = {
   CA: '🇨🇦',
 };
 
-/** 深拷贝店铺草稿（含产品明细）并重新生成本地 key，避免与上一条代理信息共享引用/key 冲突。 */
-function cloneShops(shops: ShopDraft[]): ShopDraft[] {
+/** 深拷贝店铺草稿（含产品明细）并重新生成本地 key，避免与上一条代理信息共享引用/key 冲突；
+ * 克隆来源既可能是本次会话新增的 `ShopDraft`（已带 key），也可能是已存在客户的 `ShopPayload`
+ * （不带 key），两种情况下的 key 都会在此处重新生成，故入参 key 是否存在不影响结果。 */
+function cloneShops(shops: (ShopDraft | ShopPayload)[]): ShopDraft[] {
   return shops.map((shop) => ({
     ...shop,
     key: nextKey(),
-    products: shop.products.map((product) => ({ ...product, key: nextKey() })),
+    products: (shop.products ?? []).map((product) => ({ ...product, key: nextKey() })),
   }));
+}
+
+/** 把 `checkDuplicate` 带出的已存在代理信息（无本地 key）转成只读展示用的草稿。 */
+function toExistingAgentInfoDraft(agent: DuplicateCheckAgentInfo): AgentInfoDraft {
+  return {
+    ...agent,
+    key: nextKey(),
+    shops: agent.shops.map((shop) => ({
+      ...shop,
+      key: nextKey(),
+      products: (shop.products ?? []).map((product) => ({ ...product, key: nextKey() })),
+    })),
+  };
 }
 
 /**
  * 新增指定国家的代理信息：代理国家一旦选定即锁定，代理公司默认取该国家下第一家，
- * 并带上上一条代理信息已填写的店铺信息，减少重复录入。
+ * 并带上"最近一张代理信息卡片"（本次会话新增的，若还没有则取该客户已存在的）已填写的
+ * 店铺信息，减少重复录入。
  */
 function createAgentInfoForCountry(
   country: AgentCountry,
   prevAgentInfos: AgentInfoDraft[],
+  existingAgentInfos: DuplicateCheckAgentInfo[],
 ): AgentInfoDraft {
-  const prev = prevAgentInfos[prevAgentInfos.length - 1];
+  const prev =
+    prevAgentInfos[prevAgentInfos.length - 1] ?? existingAgentInfos[existingAgentInfos.length - 1];
   return {
     key: nextKey(),
     country,
@@ -82,8 +106,17 @@ export const StepShops = forwardRef<StepShopsHandle>(function StepShops(_props, 
   const existingCountries = new Set<AgentCountry>(existingAgentInfos.map((a) => a.country));
   const allCountries = Object.keys(AGENT_COUNTRY_LABELS) as AgentCountry[];
 
+  /** 已存在客户的代理信息只读卡片：供查看 + 新增其他国家代理信息时默认复用其店铺/产品数据。 */
+  const existingAgentInfoDrafts = useMemo(
+    () => existingAgentInfos.map(toExistingAgentInfoDraft),
+    [existingAgentInfos],
+  );
+
   const addAgentInfo = (country: AgentCountry) => {
-    setAgentInfos([...agentInfos, createAgentInfoForCountry(country, agentInfos)]);
+    setAgentInfos([
+      ...agentInfos,
+      createAgentInfoForCountry(country, agentInfos, existingAgentInfos),
+    ]);
     setPickerOpen(false);
   };
 
@@ -131,7 +164,7 @@ export const StepShops = forwardRef<StepShopsHandle>(function StepShops(_props, 
 
   return (
     <div>
-      {agentInfos.length === 0 ? (
+      {agentInfos.length === 0 && existingAgentInfoDrafts.length === 0 ? (
         <div style={{ marginBottom: 16, textAlign: 'center' }}>
           <Empty description="尚未添加代理信息" style={{ marginBottom: 16 }} />
           <Popover
@@ -148,6 +181,24 @@ export const StepShops = forwardRef<StepShopsHandle>(function StepShops(_props, 
         </div>
       ) : (
         <div className="agent-info-grid">
+          {existingAgentInfoDrafts.map((agentInfo) => (
+            <div key={agentInfo.key}>
+              <Card
+                className="agent-card"
+                variant="borderless"
+                title={
+                  <span className="section-title section-title--agent">
+                    <span className="section-title__flag">
+                      {AGENT_COUNTRY_FLAGS[agentInfo.country]}
+                    </span>
+                    {AGENT_COUNTRY_LABELS[agentInfo.country]}代理（已存在）
+                  </span>
+                }
+              >
+                <AgentInfoEditor agentInfo={agentInfo} onChange={() => {}} disabled />
+              </Card>
+            </div>
+          ))}
           {agentInfos.map((agentInfo) => (
             <div
               key={agentInfo.key}
@@ -189,7 +240,7 @@ export const StepShops = forwardRef<StepShopsHandle>(function StepShops(_props, 
           ))}
         </div>
       )}
-      {agentInfos.length > 0 ? (
+      {agentInfos.length > 0 || existingAgentInfoDrafts.length > 0 ? (
         <Popover
           trigger="click"
           open={pickerOpen}

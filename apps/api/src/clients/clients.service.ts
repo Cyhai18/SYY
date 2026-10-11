@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { AttachmentType, ClientStatus, Prisma, Role } from '@prisma/client';
 import type { Queue } from 'bullmq';
+import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActionLogService } from '../common/action-log/action-log.service';
 import { FILE_STORAGE, type FileStorageService } from '../storage/file-storage.service';
@@ -26,6 +27,45 @@ import type {
 } from './dto/client-payload.dto';
 import type { UpdateClientDto } from './dto/update-client.dto';
 import type { ListClientsDto } from './dto/list-clients.dto';
+
+/**
+ * 证书服务有效期状态推导：与 packages/shared 的 `deriveCertificateServiceStatus` 保持同一口径
+ * （apps/api 未依赖 @funtax/shared，按约定单独维护一份，见 row-validator.service.ts 同类注释）。
+ * 到期前 30 天进入"待续费"窗口，过期后为"失效"，否则"生效中"。
+ */
+const CERTIFICATE_RENEWAL_WINDOW_DAYS = 30;
+function deriveCertificateServiceStatus(expiresAt: Date): 'ACTIVE' | 'PENDING_RENEWAL' | 'EXPIRED' {
+  const now = Date.now();
+  const expiry = expiresAt.getTime();
+  if (now > expiry) return 'EXPIRED';
+  const renewalWindowStart = expiry - CERTIFICATE_RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  if (now >= renewalWindowStart) return 'PENDING_RENEWAL';
+  return 'ACTIVE';
+}
+
+// 中文标签，需与 @funtax/shared 的 *_LABELS 保持一致（apps/api 未依赖 @funtax/shared，按既有约定单独维护一份）。
+const AGENT_COUNTRY_LABELS: Record<string, string> = {
+  GB: '英国',
+  EU: '欧盟',
+  US: '美国',
+  TR: '土耳其',
+  CA: '加拿大',
+};
+const CERTIFICATE_PROCESS_STATUS_LABELS: Record<string, string> = {
+  NONE: '未生成',
+  PENDING: '等待生成',
+  GENERATING: '生成中',
+  FAILED: '生成失败',
+};
+const CERTIFICATE_SERVICE_STATUS_LABELS: Record<string, string> = {
+  ACTIVE: '生效中',
+  PENDING_RENEWAL: '待续费',
+  EXPIRED: '失效',
+};
+
+/** 客户导出单次最多允许导出的客户数，超过时阻断并提示缩小筛选范围，避免单次查询/生成过大文件。 */
+const EXPORT_MAX_CLIENTS = 5000;
+const EXPORT_BATCH_SIZE = 500;
 
 export interface ClientAttachmentInput {
   type: AttachmentType;
@@ -121,16 +161,20 @@ export class ClientsService {
 
   /**
    * 供向导查重使用：统一信用代码/身份证号两个输入框已禁止手动编辑，只能由证件 OCR 识别得出，
-   * 因此该接口只会在 OCR 识别成功后触发一次，不再有 onBlur 高频触发的顾虑，故不做 `assertAccess`
-   * 权限拦截，直接返回命中客户的完整 `companyInfo`/`legalRepInfo`/联系方式/已有代理信息，供前端
-   * 回填对应表单 tab、并禁用已存在的代理国家选项，避免用户已上传过证件的老客户还要重新手填一遍，
-   * 或不小心为同一国家重复追加代理信息。未命中返回 `null`。
+   * 因此该接口只会在 OCR 识别成功后触发一次，不再有 onBlur 高频触发的顾虑。
+   *
+   * 命中客户归属当前操作人（`ownerId === actor.id`）时，才返回完整的 `companyInfo`/`legalRepInfo`/
+   * 联系方式/已有代理信息，供前端回填对应表单 tab、并禁用已存在的代理国家选项；
+   * 命中客户归属其他用户时，视为越权操作，不返回任何客户信息（`client: null`），
+   * 仅通过 `owned: false` 告知前端该客户已存在但不属于当前用户，前端据此阻断流程、不允许继续新增/修改。
+   * 未命中返回 `{ exists: false, owned: false, client: null }`。
    */
-  async checkDuplicate(uniqueIdentifier: string) {
+  async checkDuplicate(uniqueIdentifier: string, actor: AuthenticatedUser) {
     const client = await this.prisma.client.findFirst({
       where: { deletedAt: null, uniqueIdentifier },
       select: {
         id: true,
+        ownerId: true,
         phone: true,
         email: true,
         remark: true,
@@ -163,24 +207,56 @@ export class ClientsService {
             agentCompany: true,
             expectedEffectiveDate: true,
             agentYears: true,
+            shops: {
+              select: {
+                platform: true,
+                shopId: true,
+                shopName: true,
+                shopUrl: true,
+                brandNames: true,
+                mainCategoryEn: true,
+                products: {
+                  select: {
+                    platform: true,
+                    productNameCn: true,
+                    productNameEn: true,
+                    category: true,
+                    asinOrSku: true,
+                    productUrl: true,
+                    hasBattery: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
     });
-    if (!client) return null;
+    if (!client) return { exists: false, owned: false, client: null };
+    if (client.ownerId !== actor.id) {
+      // 命中客户归属其他用户：不暴露任何客户信息，仅告知"存在但不属于我"，前端据此阻断新增/修改。
+      return { exists: true, owned: false, client: null };
+    }
     return {
-      id: client.id,
-      phone: client.phone,
-      email: client.email ?? undefined,
-      remark: client.remark ?? undefined,
-      companyInfo: client.companyInfo ?? undefined,
-      legalRepInfo: client.legalRepInfo ?? undefined,
-      agentInfos: client.agentInfos.map((a) => ({
-        country: a.country,
-        agentCompany: a.agentCompany,
-        expectedEffectiveDate: a.expectedEffectiveDate.toISOString(),
-        agentYears: a.agentYears,
-      })),
+      exists: true,
+      owned: true,
+      client: {
+        id: client.id,
+        phone: client.phone,
+        email: client.email ?? undefined,
+        remark: client.remark ?? undefined,
+        companyInfo: client.companyInfo ?? undefined,
+        legalRepInfo: client.legalRepInfo ?? undefined,
+        // 命中后一并带出已有代理信息的完整店铺/产品明细，供前端在代理信息步骤只读展示、
+        // 并在新增其他国家代理信息时默认复用；归属校验见上方 owned 判断。
+        agentInfos: client.agentInfos.map((a) => ({
+          country: a.country,
+          agentCompany: a.agentCompany,
+          expectedEffectiveDate: a.expectedEffectiveDate.toISOString(),
+          agentYears: a.agentYears,
+          shops: a.shops,
+        })),
+      },
     };
   }
 
@@ -305,15 +381,68 @@ export class ClientsService {
     }
   }
 
-  async findAll(query: ListClientsDto, actor: AuthenticatedUser) {
-    const page = query.page ?? 1;
-    const pageSize = query.pageSize ?? 20;
+  /**
+   * 构建客户列表查询的 where 条件，供 `findAll` 与 `exportClients` 共用。
+   * 返回外层 `ClientWhereInput` 以及对应的 `agentInfos` 子查询 where（用于 include 时只返回命中筛选的代理信息）。
+   */
+  private buildClientListWhere(
+    query: Pick<
+      ListClientsDto,
+      | 'clientType'
+      | 'certificateStatus'
+      | 'agentCountry'
+      | 'submittedFrom'
+      | 'submittedTo'
+      | 'keyword'
+    >,
+    actor: AuthenticatedUser,
+  ): { where: Prisma.ClientWhereInput; agentInfosWhere: Prisma.AgentInfoWhereInput | undefined } {
+    // 证书状态筛选：与列表页展示口径一致（见 deriveCertificateServiceStatus 同款函数），
+    // NONE/PENDING/GENERATING/FAILED 直接匹配生成流程状态；ACTIVE/PENDING_RENEWAL/EXPIRED
+    // 则是生成成功后按 expiresAt 与当前时间的相对关系换算出的日期区间。
+    const certificateStatusWhere: Prisma.AgentInfoWhereInput | undefined = (() => {
+      switch (query.certificateStatus) {
+        case undefined:
+          return undefined;
+        case 'NONE':
+        case 'PENDING':
+        case 'GENERATING':
+        case 'FAILED':
+          return { certificateStatus: query.certificateStatus };
+        case 'ACTIVE': {
+          const now = new Date();
+          const renewalStart = new Date(
+            now.getTime() + CERTIFICATE_RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+          );
+          return { certificateStatus: 'SUCCESS', expiresAt: { gt: renewalStart } };
+        }
+        case 'PENDING_RENEWAL': {
+          const now = new Date();
+          const renewalStart = new Date(
+            now.getTime() + CERTIFICATE_RENEWAL_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+          );
+          return { certificateStatus: 'SUCCESS', expiresAt: { gte: now, lte: renewalStart } };
+        }
+        case 'EXPIRED': {
+          const now = new Date();
+          return { certificateStatus: 'SUCCESS', expiresAt: { lt: now } };
+        }
+      }
+    })();
+    const agentInfosWhere: Prisma.AgentInfoWhereInput | undefined =
+      certificateStatusWhere || query.agentCountry
+        ? {
+            ...certificateStatusWhere,
+            ...(query.agentCountry ? { country: query.agentCountry } : {}),
+          }
+        : undefined;
     const where: Prisma.ClientWhereInput = {
       deletedAt: null,
       ...(actor.role === Role.USER ? { ownerId: actor.id } : {}),
       ...(query.clientType ? { clientType: query.clientType } : {}),
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.agentCountry ? { agentInfos: { some: { country: query.agentCountry } } } : {}),
+      // certificateStatus 和 agentCountry 都基于 agentInfos 做 some 过滤，需合并到同一个 agentInfos
+      // 条件里（分开写成两个 `agentInfos` key 会被后一个覆盖，而不是同时生效）。
+      ...(agentInfosWhere ? { agentInfos: { some: agentInfosWhere } } : {}),
       ...(query.submittedFrom || query.submittedTo
         ? {
             createdAt: {
@@ -335,6 +464,13 @@ export class ClientsService {
           }
         : {}),
     };
+    return { where, agentInfosWhere };
+  }
+
+  async findAll(query: ListClientsDto, actor: AuthenticatedUser) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const { where, agentInfosWhere } = this.buildClientListWhere(query, actor);
 
     const [total, items] = await this.prisma.$transaction([
       this.prisma.client.count({ where }),
@@ -345,8 +481,10 @@ export class ClientsService {
           legalRepInfo: true,
           owner: true,
           agentInfos: {
-            // 按代理国家筛选时，只返回匹配该国家的代理信息，不展示该客户的其他国家代理
-            ...(query.agentCountry ? { where: { country: query.agentCountry } } : {}),
+            // 按代理国家/证书状态筛选时，只返回匹配的代理信息，不展示该客户其余不匹配的代理信息
+            // （否则客户是因为其中一条代理信息命中筛选条件才被查出来的，但子表格会连带展示该客户
+            // 下所有代理信息，造成"搜待续费却看到生效中"的误解）。
+            ...(agentInfosWhere ? { where: agentInfosWhere } : {}),
             include: { shops: { select: { id: true } } },
             orderBy: { createdAt: 'asc' },
           },
@@ -379,12 +517,90 @@ export class ClientsService {
           agentCompany: a.agentCompany,
           expectedEffectiveDate: a.expectedEffectiveDate.toISOString(),
           expiresAt: a.expiresAt.toISOString(),
+          agentYears: a.agentYears,
           shopCount: a.shops.length,
           certificateStatus: a.certificateStatus,
           certificateError: a.certificateError,
+          serviceStatus:
+            a.certificateStatus === 'SUCCESS' ? deriveCertificateServiceStatus(a.expiresAt) : null,
         })),
       })),
     };
+  }
+
+  /**
+   * 导出客户列表为 Excel：按与 `findAll` 相同的筛选口径（含权限隔离）取数，每条代理信息导出一行，
+   * 客户下没有代理信息时仍导出一行（代理相关列留空）。超过 `EXPORT_MAX_CLIENTS` 时阻断并提示缩小范围，
+   * 不做静默截断。分批查询避免一次性把全部代理信息载入内存。
+   */
+  async exportClients(
+    query: Pick<
+      ListClientsDto,
+      | 'clientType'
+      | 'certificateStatus'
+      | 'agentCountry'
+      | 'submittedFrom'
+      | 'submittedTo'
+      | 'keyword'
+    >,
+    actor: AuthenticatedUser,
+  ): Promise<Buffer> {
+    const { where, agentInfosWhere } = this.buildClientListWhere(query, actor);
+
+    const total = await this.prisma.client.count({ where });
+    if (total > EXPORT_MAX_CLIENTS) {
+      throw new BadRequestException(
+        `当前筛选条件下共 ${total} 条，超过 ${EXPORT_MAX_CLIENTS} 条上限，请缩小筛选范围后重试`,
+      );
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('客户列表');
+    sheet.columns = [
+      { header: '客户名称（中文）', key: 'nameCn', width: 30 },
+      { header: '代理国家', key: 'agentCountry', width: 12 },
+      { header: '服务截止日期', key: 'expiresAt', width: 14 },
+      { header: '证书状态', key: 'certificateStatus', width: 12 },
+    ];
+
+    for (let skip = 0; skip < total; skip += EXPORT_BATCH_SIZE) {
+      const clients = await this.prisma.client.findMany({
+        where,
+        include: {
+          companyInfo: true,
+          legalRepInfo: true,
+          agentInfos: {
+            ...(agentInfosWhere ? { where: agentInfosWhere } : {}),
+            orderBy: { createdAt: 'asc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: EXPORT_BATCH_SIZE,
+      });
+
+      for (const c of clients) {
+        const nameCn = c.companyInfo?.nameCn ?? c.legalRepInfo?.nameCn ?? '';
+        if (c.agentInfos.length === 0) {
+          sheet.addRow({ nameCn, agentCountry: '', expiresAt: '', certificateStatus: '' });
+          continue;
+        }
+        for (const a of c.agentInfos) {
+          const certificateStatusLabel =
+            a.certificateStatus === 'SUCCESS'
+              ? CERTIFICATE_SERVICE_STATUS_LABELS[deriveCertificateServiceStatus(a.expiresAt)]
+              : CERTIFICATE_PROCESS_STATUS_LABELS[a.certificateStatus];
+          sheet.addRow({
+            nameCn,
+            agentCountry: AGENT_COUNTRY_LABELS[a.country] ?? a.country,
+            expiresAt: a.expiresAt.toISOString().slice(0, 10),
+            certificateStatus: certificateStatusLabel,
+          });
+        }
+      }
+    }
+
+    return workbook.xlsx.writeBuffer() as unknown as Promise<Buffer>;
   }
 
   async findOne(id: string, actor: AuthenticatedUser) {

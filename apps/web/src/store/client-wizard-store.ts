@@ -41,8 +41,9 @@ interface ClientWizardState {
   companyInfo: Partial<CompanyInfoPayload>;
   legalRepInfo: Partial<LegalRepresentativePayload>;
   agentInfos: AgentInfoDraft[];
-  /** APPEND 模式下命中的已存在客户已有的代理信息摘要（不含店铺明细），用于代理信息步骤
-   * 禁用已占用的代理国家选项；CREATE 模式恒为空数组。 */
+  /** APPEND 模式下命中的已存在客户已有的代理信息（含店铺/产品明细），用于代理信息步骤
+   * 禁用已占用的代理国家选项、只读展示已有代理信息卡片，并在新增其他国家代理信息时
+   * 默认复用其店铺数据；CREATE 模式恒为空数组。 */
   existingAgentInfos: DuplicateCheckAgentInfo[];
   /** OCR 识别是否失败过，用于在表单顶部展示统一提醒语（长期状态，不随提示条自动消失而复位）。 */
   ocrFailedHint: boolean;
@@ -65,6 +66,11 @@ interface ClientWizardState {
   markOcrFailed: () => void;
   dismissOcrFailedHint: () => void;
   dismissLockedHint: () => void;
+  /**
+   * 查重命中"归属其他用户"被阻断时调用：清空本次 OCR 识别回填的主体/法人信息及已上传的证件文件，
+   * 强制用户重新上传证件，避免带着被拦截的统一信用代码/身份证号直接进入下一步、到最终提交才报错。
+   */
+  clearRecognizedIdentity: (target: 'company' | 'legalRep') => void;
   setBusinessLicenseFile: (file: File) => void;
   setIdCardFile: (side: 'front' | 'back', file: File) => void;
   clearBusinessLicenseFile: () => void;
@@ -147,6 +153,12 @@ export const useClientWizardStore = create<ClientWizardState>((set) => ({
     if (lockedHintTimer) clearTimeout(lockedHintTimer);
     set({ lockedHintVisible: false });
   },
+  clearRecognizedIdentity: (target) =>
+    set(
+      target === 'company'
+        ? { companyInfo: {}, businessLicenseFile: null }
+        : { legalRepInfo: {}, idCardFrontFile: null, idCardBackFile: null },
+    ),
   setBusinessLicenseFile: (file) => set({ businessLicenseFile: file }),
   setIdCardFile: (side, file) =>
     set(side === 'front' ? { idCardFrontFile: file } : { idCardBackFile: file }),

@@ -3,10 +3,10 @@ import type {
   AgentInfoPayload,
   CertificateRecord,
   CertificateStatus,
+  CertificateStatusFilter,
   ClientDetail,
   ClientListItem,
   ClientPayload,
-  ClientStatus,
   ClientType,
   CompanyInfoPayload,
   DuplicateCheckResult,
@@ -28,7 +28,7 @@ export interface ListClientsParams {
   pageSize?: number;
   keyword?: string;
   clientType?: ClientType;
-  status?: ClientStatus;
+  certificateStatus?: CertificateStatusFilter;
   agentCountry?: AgentCountry;
   /** 提交日期区间，格式 YYYY-MM-DD */
   submittedFrom?: string;
@@ -48,7 +48,7 @@ function buildQuery(params: ListClientsParams): string {
   if (params.pageSize) query.set('pageSize', String(params.pageSize));
   if (params.keyword) query.set('keyword', params.keyword);
   if (params.clientType) query.set('clientType', params.clientType);
-  if (params.status) query.set('status', params.status);
+  if (params.certificateStatus) query.set('certificateStatus', params.certificateStatus);
   if (params.agentCountry) query.set('agentCountry', params.agentCountry);
   if (params.submittedFrom) query.set('submittedFrom', params.submittedFrom);
   if (params.submittedTo) query.set('submittedTo', params.submittedTo);
@@ -85,9 +85,12 @@ export const clientsApi = {
 
   get: (id: string) => apiClient.get<ClientDetail>(`/clients/${id}`),
 
-  /** 证件 OCR 识别成功后触发的查重：命中已存在客户时返回其 companyInfo/legalRepInfo，用于前端回填表单并切换到追加模式。 */
+  /**
+   * 证件 OCR 识别成功后触发的查重：命中已存在客户时返回其 companyInfo/legalRepInfo，用于前端回填表单并切换到追加模式。
+   * `owned: false` 表示命中的客户存在但归属于其他用户，此时 `client` 恒为 `null`，前端应阻断流程、禁止继续新增/修改。
+   */
   checkDuplicate: (creditCode: string) =>
-    apiClient.get<{ exists: boolean; client: DuplicateCheckResult | null }>(
+    apiClient.get<{ exists: boolean; owned: boolean; client: DuplicateCheckResult | null }>(
       `/clients/duplicate-check?creditCode=${encodeURIComponent(creditCode)}`,
     ),
 
@@ -124,6 +127,13 @@ export const clientsApi = {
       `/agent-infos/${agentInfoId}/certificate`,
     ),
 
+  /**
+   * 续费：仅限服务状态为"待续费/失效"的代理信息。新生效日期 = 原截止日期次日，
+   * 新截止日期 = 新生效日期 + 原代理年限，更新后立即入队重新生成证书。
+   */
+  renewCertificate: (agentInfoId: string) =>
+    apiClient.post<{ certificateStatus: CertificateStatus }>(`/agent-infos/${agentInfoId}/renew`),
+
   /** 某条代理信息的历史成功生成记录，供"查看证书"弹窗展示 + 下载。 */
   listCertificates: (agentInfoId: string) =>
     apiClient.get<CertificateRecord[]>(`/agent-infos/${agentInfoId}/certificates`),
@@ -131,4 +141,8 @@ export const clientsApi = {
   /** 按已落盘文件直接下载，不触发重新生成。 */
   downloadCertificate: (certificateId: string) =>
     apiClient.getBinary(`/agent-infos/certificates/${certificateId}/download`),
+
+  /** 导出客户列表为 Excel，筛选口径与 `list` 一致（分页参数不生效，后端按 5000 条上限阻断）。 */
+  exportClients: (params: Omit<ListClientsParams, 'page' | 'pageSize'> = {}) =>
+    apiClient.getBinary(`/clients/export${buildQuery(params)}`),
 };

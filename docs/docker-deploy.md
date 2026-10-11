@@ -363,6 +363,36 @@ docker compose ps
 docker compose logs -f api
 ```
 
+### 5.1 代码变更后如何更新（通用步骤）
+
+不管这次改的是前端、后端、Python 服务、Prisma schema 还是环境变量，都按下面这套"最大公约数"步骤走一遍即可，不需要先判断具体改了哪部分再决定执行哪条命令：
+
+```bash
+cd /data/funtax
+
+# 1. 拉最新代码
+git pull
+
+# 2. 全量重新构建 + 重启（未变化的服务/层会命中 Docker 层缓存，不会白白重新下载/编译）
+docker compose up -d --build
+
+# 3. 跑数据库迁移（没有新 migration 时是空操作，直接返回，不影响）
+docker compose exec api npx prisma migrate deploy
+
+# 4. 确认全部容器状态正常
+docker compose ps
+
+# 5. 看一下有没有启动报错（尤其 api，连接宿主机 MySQL/Redis 容易在这一步暴露问题）
+docker compose logs -f api
+```
+
+几点说明：
+
+- **`docker compose up -d --build`**：按 Dockerfile 的每一层逐一比对是否需要重建，没改的服务/没改的层直接复用缓存，不会出现"只改了前端代码，却把 `ocr-service` 的模型重新下载一遍"这种情况（见二.3）；只改了环境变量（`.env` / `apps/api/.env.production`）时，该命令也会重新创建容器、重新加载 `env_file`，同样覆盖这个场景，不需要单独处理。
+- **`prisma migrate deploy`**：幂等命令，没有新的 migration 文件时直接提示没有待执行的迁移并退出，不会因为"这次其实没改 schema"而报错，放进通用步骤里无副作用。
+- **唯一例外**：如果同时改了 `docker-compose.yml` 里的 `volumes` 定义（比如改了挂载路径），需要额外确认旧 volume 里的数据要不要迁移，这类结构性变更不适合纳入这套无脑通用步骤，需单独评估。
+- 如果只想精确重建某一个服务（比如明确只改了 `apps/web`），也可以把第 2 步换成 `docker compose up -d --build <服务名>`，减少不必要的等待，但不是必须的，全量 `--build` 同样安全。
+
 ## 六、HTTPS（选定方案：Caddy）
 
 `web` 容器改用 **Caddy** 替代 Nginx（见二.2），生产环境上 HTTPS 只需要一份 `Caddyfile`，

@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
-import { AgentCountry, ClientStatus, ClientType } from '@prisma/client';
+import { IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { AgentCountry, ClientType } from '@prisma/client';
 
 export class ListClientsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number = 1;
@@ -12,7 +12,14 @@ export class ListClientsDto {
 
   @IsOptional() @IsEnum(ClientType) clientType?: ClientType;
 
-  @IsOptional() @IsEnum(ClientStatus) status?: ClientStatus;
+  /**
+   * 证书状态筛选：NONE/PENDING/GENERATING/FAILED 对应生成流程状态（直接匹配 AgentInfo.certificateStatus）；
+   * ACTIVE/PENDING_RENEWAL/EXPIRED 对应生成成功后按日期派生的服务状态，见 clients.service.ts#findAll 的日期区间换算。
+   */
+  @IsOptional()
+  @IsIn(['NONE', 'PENDING', 'GENERATING', 'FAILED', 'ACTIVE', 'PENDING_RENEWAL', 'EXPIRED'])
+  certificateStatus?:
+    'NONE' | 'PENDING' | 'GENERATING' | 'FAILED' | 'ACTIVE' | 'PENDING_RENEWAL' | 'EXPIRED';
 
   @IsOptional() @IsEnum(AgentCountry) agentCountry?: AgentCountry;
 

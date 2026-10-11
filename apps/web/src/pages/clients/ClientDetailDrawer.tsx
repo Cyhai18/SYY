@@ -14,8 +14,8 @@ import { brandColors } from '../../theme';
 
 const STATUS_COLOR: Record<ClientStatus, string> = {
   NORMAL: brandColors.success,
-  PENDING_RENEWAL: brandColors.warning,
   PENDING_REVIEW: brandColors.body,
+  INACTIVE: 'error',
 };
 
 const IMAGE_EXT_RE = /\.(jpe?g|png|webp|gif)$/i;

@@ -121,7 +121,6 @@ export const AgentInfoEditor = forwardRef<
               <DatePicker
                 style={{ width: '100%' }}
                 disabled={disabled}
-                disabledDate={(date) => date.isBefore(dayjs(), 'day')}
                 onChange={(date) =>
                   update({ expectedEffectiveDate: date ? date.format('YYYY-MM-DD') : '' })
                 }

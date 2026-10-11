@@ -1,4 +1,13 @@
-import { Controller, Get, Inject, NotFoundException, Param, Post, Res } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Post,
+  Res,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import type { Queue } from 'bullmq';
 import { CertificateService } from './certificate.service';
@@ -36,6 +45,39 @@ export class CertificateController {
     await this.prisma.agentInfo.update({
       where: { id: agentInfoId },
       data: { certificateStatus: 'PENDING', certificateError: null },
+    });
+    await this.queue.add('generate', { agentInfoId, actorId: user.id });
+    return { certificateStatus: 'PENDING' };
+  }
+
+  /**
+   * 续费：仅限 `PENDING_RENEWAL`/`EXPIRED` 派生状态的代理信息。新生效日期 = 原 `expiresAt` 次日，
+   * 新截止日期 = 新生效日期 + `agentYears`（年限沿用原值），更新后复用生成入队逻辑。
+   * 续费前后的证书历史都保留在 `Certificate` 表中，不做特殊标识。
+   */
+  @Post(':agentInfoId/renew')
+  async renew(@Param('agentInfoId') agentInfoId: string, @CurrentUser() user: AuthenticatedUser) {
+    const agentInfo = await this.prisma.agentInfo.findUnique({ where: { id: agentInfoId } });
+    if (!agentInfo) {
+      throw new NotFoundException('代理信息不存在');
+    }
+    if (agentInfo.certificateStatus !== 'SUCCESS') {
+      throw new BadRequestException('当前证书状态不支持续费');
+    }
+
+    const newEffectiveDate = new Date(agentInfo.expiresAt);
+    newEffectiveDate.setUTCDate(newEffectiveDate.getUTCDate() + 1);
+    const newExpiresAt = new Date(newEffectiveDate);
+    newExpiresAt.setUTCFullYear(newExpiresAt.getUTCFullYear() + agentInfo.agentYears);
+
+    await this.prisma.agentInfo.update({
+      where: { id: agentInfoId },
+      data: {
+        expectedEffectiveDate: newEffectiveDate,
+        expiresAt: newExpiresAt,
+        certificateStatus: 'PENDING',
+        certificateError: null,
+      },
     });
     await this.queue.add('generate', { agentInfoId, actorId: user.id });
     return { certificateStatus: 'PENDING' };

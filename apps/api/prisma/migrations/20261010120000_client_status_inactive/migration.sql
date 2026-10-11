@@ -1,0 +1,4 @@
+-- ClientStatus 枚举重构：NORMAL(正常)/PENDING_RENEWAL(待续费)/PENDING_REVIEW(待审核)
+-- -> NORMAL(正常)/PENDING_REVIEW(审核中)/INACTIVE(失效)
+-- 不迁移存量数据：现存数据若落在 PENDING_RENEWAL 上，此步会报错，需人工确认映射后再执行。
+ALTER TABLE `Client` MODIFY `status` ENUM('NORMAL', 'PENDING_REVIEW', 'INACTIVE') NOT NULL DEFAULT 'PENDING_REVIEW';
