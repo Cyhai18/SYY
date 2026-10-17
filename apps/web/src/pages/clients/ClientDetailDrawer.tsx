@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import dayjs from 'dayjs';
 import {
   Button,
   Card,
@@ -384,7 +385,7 @@ export function ClientDetailDrawer({ clientId, onClose }: ClientDetailDrawerProp
                     </Tag>
                   }
                 />
-                <InfoItem label="提交日期" value={detail.createdAt.slice(0, 10)} />
+                <InfoItem label="提交日期" value={dayjs(detail.createdAt).format('YYYY-MM-DD')} />
                 {detail.clientType === 'COMPANY' ? (
                   <>
                     <InfoItem label="统一社会信用代码" value={detail.companyInfo.creditCode} />

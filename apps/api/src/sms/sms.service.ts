@@ -1,13 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-/** 短信发送能力抽象，预留第三方接入点（阿里云/腾讯云，服务商待定）。 */
+/**
+ * 短信发送能力抽象。真实实现见 `TencentSmsService`（腾讯云短信），
+ * 未配置腾讯云密钥时由 `SmsModule` 自动回退到下面的 Mock 实现。
+ */
 export interface SmsService {
   send(phone: string, code: string): Promise<void>;
 }
 
 export const SMS_SERVICE = Symbol('SMS_SERVICE');
 
-/** MVP mock 实现：仅打日志，不真实发送。接入真实服务商前不要用于生产。 */
+/** 兜底 mock 实现：仅打日志，不真实发送。未配置 TENCENT_SMS_* 环境变量时启用，不要用于生产。 */
 @Injectable()
 export class MockSmsService implements SmsService {
   private readonly logger = new Logger(MockSmsService.name);

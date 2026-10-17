@@ -337,6 +337,56 @@ export class ExcelParserService {
   }
 
   /**
+   * 按"列号最近优先"贪心匹配候选图片与目标槽位，用于 WPS「插入单元格图片」
+   * （`_xlfn.DISPIMG`）场景：与 `assignImagesBySequentialOrder` 针对的浮动锚点图
+   * 不同，单元格图片的列号就是公式所在单元格的真实整数列号，不存在锚点浮点偏移问题，
+   * 因此不能套用"按顺序对应前 N 个槽位"的假设——否则当用户只传身份证正反面、不传
+   * 营业执照（个人类型客户的正常情况）时，身份证正面会被错误地按顺序对应到第一个槽位
+   * （营业执照），身份证反面对应到第二个槽位（身份证正面），导致识别错乱、身份证反面
+   * 丢失。按列号就近匹配可以正确处理"缺图不在最后一张"的场景，同时也兼容偶发的列号
+   * 微小误差（如 0.5 列以内）。
+   */
+  private assignImagesByNearestColumn(
+    candidates: Array<{ col: number; parsed: ParsedImage }>,
+  ): ParsedExcelResult['images'] {
+    const MAX_DISTANCE = 0.5;
+    const slots: Array<{ key: keyof ParsedExcelResult['images']; col: number }> = [
+      { key: 'businessLicense', col: IMAGE_COLS.businessLicense },
+      { key: 'idCardFront', col: IMAGE_COLS.idCardFront },
+      { key: 'idCardBack', col: IMAGE_COLS.idCardBack },
+    ];
+
+    const pairs: Array<{ candidateIndex: number; slotIndex: number; distance: number }> = [];
+    candidates.forEach((candidate, candidateIndex) => {
+      slots.forEach((slot, slotIndex) => {
+        const distance = Math.abs(candidate.col - slot.col);
+        if (distance <= MAX_DISTANCE) {
+          pairs.push({ candidateIndex, slotIndex, distance });
+        }
+      });
+    });
+    pairs.sort((a, b) => a.distance - b.distance);
+
+    const images: ParsedExcelResult['images'] = {};
+    const usedCandidates = new Set<number>();
+    const usedSlots = new Set<number>();
+    for (const pair of pairs) {
+      if (usedCandidates.has(pair.candidateIndex) || usedSlots.has(pair.slotIndex)) {
+        continue;
+      }
+      usedCandidates.add(pair.candidateIndex);
+      usedSlots.add(pair.slotIndex);
+      images[slots[pair.slotIndex].key] = candidates[pair.candidateIndex].parsed;
+    }
+    candidates.forEach((candidate, candidateIndex) => {
+      if (!usedCandidates.has(candidateIndex)) {
+        this.logger.debug(`忽略未知列的单元格图片，col=${candidate.col}`);
+      }
+    });
+    return images;
+  }
+
+  /**
    * 兜底图片解析：直接把 xlsx 当 zip 打开，解析 `xl/drawings/drawing*.xml` 里的
    * `<xdr:oneCellAnchor>`/`<xdr:twoCellAnchor>` 锚点（记录图片所在列 + 关系 ID），
    * 再通过对应 `xl/drawings/_rels/drawing*.xml.rels` 把关系 ID 换算成图片文件路径
@@ -514,7 +564,7 @@ export class ExcelParserService {
       candidates.push({ col, parsed: { buffer: mediaEntry.getData(), mimetype } });
     }
 
-    return this.assignImagesBySequentialOrder(candidates);
+    return this.assignImagesByNearestColumn(candidates);
   }
 
   /** 单元格引用里的列字母（如 "B"/"AA"）转 0-based 列号，与 exceljs 的 `range.tl.col` 口径一致 */

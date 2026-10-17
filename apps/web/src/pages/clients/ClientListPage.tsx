@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ComponentProps } from 'react';
+import dayjs from 'dayjs';
 import {
   Badge,
   Button,
@@ -93,16 +94,16 @@ const CERTIFICATE_SERVICE_STATUS_COLOR: Record<
   EXPIRED: 'error',
 };
 
-/** 格式化为 YYYY-MM-DD，无值时显示占位符 */
+/** 格式化为 YYYY-MM-DD，无值时显示占位符；后端返回的是 UTC 时间字符串，需转换为本地时区再截取，否则会有时差 */
 function formatDate(v: string | null): string {
   if (!v) return '—';
-  return v.slice(0, 10);
+  return dayjs(v).format('YYYY-MM-DD');
 }
 
-/** 格式化为 YYYY-MM-DD HH:mm，导入记录需要精确到分钟以便区分同一天多批次 */
+/** 格式化为 YYYY-MM-DD HH:mm，导入记录需要精确到分钟以便区分同一天多批次；同样需按本地时区转换 */
 function formatDateTime(v: string | null): string {
   if (!v) return '—';
-  return v.slice(0, 16).replace('T', ' ');
+  return dayjs(v).format('YYYY-MM-DD HH:mm');
 }
 
 const IMPORT_JOB_STATUS_LABELS: Record<ImportJobStatus, string> = {
