@@ -32,23 +32,47 @@ function extractErrorMessage(payload: unknown): string | undefined {
 
 let refreshPromise: Promise<string | null> | null = null;
 
-/** 用 Cookie 里的 Refresh Token 换新的 Access Token；同一时间只发起一次请求（多个 401 并发时复用）。 */
-async function refreshAccessToken(): Promise<string | null> {
-  if (!refreshPromise) {
-    refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-    })
-      .then(async (res) => {
-        if (!res.ok) return null;
-        const data = (await res.json()) as { accessToken: string };
-        return data.accessToken;
-      })
-      .catch(() => null)
-      .finally(() => {
-        refreshPromise = null;
-      });
-  }
+const REFRESH_LOCK_NAME = 'funtax-auth-refresh';
+
+/** 实际发起 /auth/refresh 请求。真正的网络调用必须放在跨 Tab 锁里执行，
+ *  这样当锁轮到当前 Tab 时，fetch 会自动带上当时最新的 Cookie（浏览器按请求时刻取 Cookie，
+ *  不是 JS 发起调用那一刻缓存的值），从而天然吃到其它 Tab 已经转动过的新 Refresh Token。 */
+async function doRefreshRequest(): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/auth/refresh`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { accessToken: string };
+  return data.accessToken;
+}
+
+/**
+ * 用 Cookie 里的 Refresh Token 换新的 Access Token。
+ * - Tab 内去重：同一时间只发起一次请求（多个 401 并发/启动引导并发时复用同一个 Promise）。
+ * - 跨 Tab 互斥：Refresh Token 是一次性轮换（用一次就失效），多个 Tab/Window 几乎同时刷新页面
+ *   或各自的 Access Token 同时过期时，会并发带着同一个旧 Refresh Token 去换新 Token，
+ *   先到的一方轮换成功，后到的一方会因为 Token 已被撤销而返回 401，导致那个 Tab 被误判为"登录过期"
+ *   并跳转回登录页（即"刷新页面有概率回到登录页"的根因）。
+ *   用 Web Locks API 把实际请求串行化：排队等锁时不会提前发出请求，轮到执行时才真正 fetch，
+ *   此时 Cookie 已经是别的 Tab 刷新后的最新值，从而避免"旧 Token 被别人抢先用掉"的情况。
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+
+  const run = () => doRefreshRequest().catch(() => null);
+  // lib.dom 里 LockGrantedCallback<T> 的类型签名要求回调同步返回 T，但 Web Locks 规范
+  // 实际上允许回调返回 Promise<T> 并会自动等待，这里用类型断言绕开过于保守的内置类型。
+  const pending: Promise<string | null> =
+    typeof navigator !== 'undefined' && navigator.locks
+      ? (navigator.locks.request(
+          REFRESH_LOCK_NAME,
+          run as unknown as () => string | null,
+        ) as unknown as Promise<string | null>)
+      : run();
+  refreshPromise = pending.finally(() => {
+    refreshPromise = null;
+  });
   return refreshPromise;
 }
 
@@ -149,7 +173,7 @@ async function requestMultipart<T>(
 async function requestBinary(
   path: string,
   options: { method?: 'GET' | 'POST'; body?: unknown } = {},
-): Promise<{ blob: Blob; fileName: string | null }> {
+): Promise<{ blob: Blob; fileName: string | null; truncated: boolean }> {
   const { method = 'POST', body } = options;
   const accessToken = useAuthStore.getState().accessToken;
 
@@ -193,7 +217,8 @@ async function requestBinary(
     : asciiMatch
       ? decodeURIComponent(asciiMatch[1])
       : null;
-  return { blob: await response.blob(), fileName };
+  const truncated = response.headers.get('X-Export-Truncated') === 'true';
+  return { blob: await response.blob(), fileName, truncated };
 }
 
 export const apiClient = {

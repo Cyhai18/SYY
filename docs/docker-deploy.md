@@ -470,6 +470,37 @@ MYSQL_PASSWORD=changeme
 1. 真实的 `.env`、`apps/api/.env.production` 都要加进 `.gitignore`（`.dockerignore` 里也排除了，见二.6），避免密钥进版本库或被打进构建上下文。
 2. `docker compose config` 可以在不真正启动的情况下打印出变量替换后的最终配置，方便部署前检查密钥是否正确加载。
 
+### 8.1 部署需要填写的环境变量汇总
+
+基于整个项目的实际读取位置（`apps/api/.env.example`、`docker-compose.yml`、各服务源码里的 `process.env.*`/`os.environ.get(...)`）汇总，分三部分：
+
+**① 根目录 `.env`**（仅 `docker-compose.yml` 做 `${VAR}` 插值用）：
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `MYSQL_PASSWORD` | 是 | 宿主机原生 MySQL 的 `funtax` 用户密码（见「五、部署步骤」建库建用户），`api` 服务拼接 `DATABASE_URL` 时用到 |
+
+**② `apps/api/.env.production`**（`api` 容器通过 `env_file` 加载；其中 `DATABASE_URL`/`REDIS_URL`/`OCR_SERVICE_URL`/`DOC_SERVICE_URL`/`UPLOAD_DIR` 已在 `docker-compose.yml` 的 `api.environment` 里按容器化网络拓扑写死覆盖，见「四、docker-compose.yml」，因此这几个字段在 `.env.production` 里即使留着示例值也不会生效，真正必须手工配置的只有 `JWT_*` 两项）：
+
+| 变量 | 必填 | 默认值/兜底 | 说明 |
+|---|---|---|---|
+| `JWT_ACCESS_SECRET` | **是** | 无兜底，生产环境不配置直接启动报错（`apps/api/src/auth/jwt.constants.ts`） | 用 `openssl rand -hex 32` 生成随机值 |
+| `JWT_REFRESH_SECRET` | **是** | 同上 | 同上 |
+| `PORT` | 否 | `3000` | 容器内监听端口，与 Dockerfile `EXPOSE 3000` 一致，无特殊需求不用改 |
+| `DATABASE_URL` | 否（容器化场景被 compose 覆盖） | — | 原生部署（`docs/tencent-cloud-deploy.md`）场景下才需要手填 `mysql://funtax:<密码>@127.0.0.1:3306/funtax` |
+| `REDIS_URL` | 否（容器化场景被 compose 覆盖） | `redis://127.0.0.1:6379` | 同上，仅原生部署场景需要 |
+| `OCR_SERVICE_URL` | 否（容器化场景被 compose 覆盖） | 未配置则优雅降级为"未识别"，不阻断流程 | 同上 |
+| `DOC_SERVICE_URL` | 否（容器化场景被 compose 覆盖） | 未配置则生成证书接口报错，不影响其他功能 | 同上 |
+| `UPLOAD_DIR` | 否（容器化场景被 compose 覆盖为 `/app/uploads`） | `<进程启动目录>/uploads` | 客户附件 + 证书 PDF 落盘根目录，原生部署务必指向持久化磁盘路径 |
+
+**③ `services/doc-service/.env`**（`doc-service` 容器内由 `GOTENBERG_URL` 环境变量读取，`docker-compose.yml` 里已通过 `environment: GOTENBERG_URL: http://gotenberg:3000` 直接覆盖，容器化部署不需要手动准备这个文件；仅本机不用 Docker、直接跑 `uvicorn` 时才需要 `cp .env.example .env` 手动配置）：
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `GOTENBERG_URL` | 容器化场景否，裸机运行是 | `http://localhost:3010` | Gotenberg 文档转 PDF 服务地址 |
+
+> `apps/web` 构建期/运行期不读取任何环境变量（`vite.config.ts` 的 `/api` 代理只在本地 `vite dev` 生效，生产构建产物里的 `/api` 请求由 `apps/web/Caddyfile` 反代到 `api` 容器，不需要 `VITE_*` 变量），因此前端没有需要配置的环境变量。
+
 ## 九、与原生部署方案（PM2 + Nginx）对比
 
 | 维度 | 原生部署（PM2 + Nginx） | Docker 镜像部署 |

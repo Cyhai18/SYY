@@ -3,7 +3,9 @@ FROM python:3.11-slim
 WORKDIR /app
 # opencv-python 依赖系统的 libgl1/libglib2.0-0，slim 基础镜像默认没有，必须手动装，
 # 否则容器启动会直接报 ImportError: libGL.so.1
-RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+# 构建机在境外/能正常访问 deb.debian.org 时，可去掉下面这行换源，直接跑 apt-get。
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g; s|http://deb.debian.org/debian-security|https://mirrors.tuna.tsinghua.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 # 用国内镜像源 + BuildKit 缓存挂载加速依赖安装：

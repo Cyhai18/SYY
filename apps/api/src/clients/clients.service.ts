@@ -10,6 +10,9 @@ import {
 import { AttachmentType, ClientStatus, Prisma, Role } from '@prisma/client';
 import type { Queue } from 'bullmq';
 import ExcelJS from 'exceljs';
+import AdmZip from 'adm-zip';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActionLogService } from '../common/action-log/action-log.service';
 import { FILE_STORAGE, type FileStorageService } from '../storage/file-storage.service';
@@ -25,7 +28,7 @@ import type {
   ClientPayloadDto,
   ShopDto,
 } from './dto/client-payload.dto';
-import type { UpdateClientDto } from './dto/update-client.dto';
+import type { UpdateAgentInfoDto, UpdateClientDto } from './dto/update-client.dto';
 import type { ListClientsDto } from './dto/list-clients.dto';
 
 /**
@@ -66,6 +69,22 @@ const CERTIFICATE_SERVICE_STATUS_LABELS: Record<string, string> = {
 /** 客户导出单次最多允许导出的客户数，超过时阻断并提示缩小筛选范围，避免单次查询/生成过大文件。 */
 const EXPORT_MAX_CLIENTS = 5000;
 const EXPORT_BATCH_SIZE = 500;
+
+/**
+ * 证书打包导出（ZIP）：落盘文件需要逐个读取再打包，比 Excel 导出重得多，上限比客户列表导出小很多。
+ * 超过上限不阻断，按当前筛选排序取前 N 份证书打包，并提示用户已被截断（而非报错让用户缩小范围）。
+ * 为避免扫描阶段把海量客户/代理信息都塞进内存，取客户时也设一个粗粒度的扫描上限。
+ */
+const CERTIFICATE_EXPORT_MAX = 500;
+const CERTIFICATE_EXPORT_SCAN_LIMIT = 2000;
+
+/** 复用与 certificate.service.ts 一致的本地落盘根目录计算方式，取证书 PDF 的绝对路径打包进 zip。 */
+const UPLOAD_ROOT = process.env.UPLOAD_DIR ?? join(process.cwd(), 'uploads');
+
+/** zip 内文件夹/文件名禁止出现路径分隔符等字符，统一替换为下划线，避免路径穿越或层级错乱。 */
+function sanitizeZipEntryName(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, '_').trim() || '未命名客户';
+}
 
 export interface ClientAttachmentInput {
   type: AttachmentType;
@@ -603,6 +622,113 @@ export class ClientsService {
     return workbook.xlsx.writeBuffer() as unknown as Promise<Buffer>;
   }
 
+  /**
+   * 按当前筛选范围把客户的代理证书打包成 ZIP：筛选口径（含权限隔离、agentInfos 按筛选条件过滤）
+   * 与 `exportClients` 完全一致；每个客户一个子文件夹，文件夹下每份代理证书取最新一次生成成功的记录，
+   * 命名为「国家代理-协议编号.pdf」。未生成过证书/生成失败/文件已缺失的代理信息直接跳过，不中断整体。
+   * 超过 `CERTIFICATE_EXPORT_MAX` 时不报错，按当前排序取前 N 份打包并在返回值里标记 `truncated`。
+   */
+  async exportCertificatesZip(
+    query: Pick<
+      ListClientsDto,
+      | 'clientType'
+      | 'certificateStatus'
+      | 'agentCountry'
+      | 'submittedFrom'
+      | 'submittedTo'
+      | 'keyword'
+    >,
+    actor: AuthenticatedUser,
+  ): Promise<{ buffer: Buffer; truncated: boolean }> {
+    const { where, agentInfosWhere } = this.buildClientListWhere(query, actor);
+
+    const clients = await this.prisma.client.findMany({
+      where,
+      include: {
+        companyInfo: true,
+        legalRepInfo: true,
+        agentInfos: {
+          ...(agentInfosWhere ? { where: agentInfosWhere } : {}),
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: CERTIFICATE_EXPORT_SCAN_LIMIT,
+    });
+
+    interface Entry {
+      clientId: string;
+      clientName: string;
+      agentInfoId: string;
+      countryLabel: string;
+    }
+    const entries: Entry[] = [];
+    for (const client of clients) {
+      const clientName = client.companyInfo?.nameCn || client.legalRepInfo?.nameCn || '未命名客户';
+      for (const agent of client.agentInfos) {
+        entries.push({
+          clientId: client.id,
+          clientName,
+          agentInfoId: agent.id,
+          countryLabel: AGENT_COUNTRY_LABELS[agent.country] ?? agent.country,
+        });
+      }
+    }
+    if (entries.length === 0) {
+      throw new BadRequestException('当前筛选条件下没有可导出的证书');
+    }
+
+    // 批量取每条代理信息"最新一次生成成功"的证书记录，避免逐条查询。
+    const certificates = await this.prisma.certificate.findMany({
+      where: { agentInfoId: { in: entries.map((e) => e.agentInfoId) }, fileUrl: { not: null } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const latestByAgentInfo = new Map<string, (typeof certificates)[number]>();
+    for (const cert of certificates) {
+      if (!latestByAgentInfo.has(cert.agentInfoId)) {
+        latestByAgentInfo.set(cert.agentInfoId, cert);
+      }
+    }
+
+    const zip = new AdmZip();
+    const folderNameByClientId = new Map<string, string>();
+    const usedFolderBaseNames = new Map<string, number>();
+    const resolveFolderName = (clientId: string, rawName: string): string => {
+      const existing = folderNameByClientId.get(clientId);
+      if (existing) return existing;
+      const safeName = sanitizeZipEntryName(rawName);
+      const seen = usedFolderBaseNames.get(safeName) ?? 0;
+      usedFolderBaseNames.set(safeName, seen + 1);
+      // 不同客户恰好同名时，用后缀区分文件夹，避免证书被错误地归到同一个文件夹下。
+      const folderName = seen === 0 ? safeName : `${safeName}(${seen + 1})`;
+      folderNameByClientId.set(clientId, folderName);
+      return folderName;
+    };
+
+    let packedCount = 0;
+    let truncated = clients.length === CERTIFICATE_EXPORT_SCAN_LIMIT;
+    for (const entry of entries) {
+      const cert = latestByAgentInfo.get(entry.agentInfoId);
+      if (!cert?.fileUrl) continue;
+      const filePath = join(UPLOAD_ROOT, cert.fileUrl);
+      if (!existsSync(filePath)) continue;
+      if (packedCount >= CERTIFICATE_EXPORT_MAX) {
+        truncated = true;
+        break;
+      }
+      const folderName = resolveFolderName(entry.clientId, entry.clientName);
+      const fileName = sanitizeZipEntryName(`${entry.countryLabel}代理-${cert.agreementNumber}`);
+      zip.addLocalFile(filePath, folderName, `${fileName}.pdf`);
+      packedCount++;
+    }
+
+    if (packedCount === 0) {
+      throw new BadRequestException('当前筛选条件下没有可导出的证书');
+    }
+
+    return { buffer: zip.toBuffer(), truncated };
+  }
+
   async findOne(id: string, actor: AuthenticatedUser) {
     const client = await this.prisma.client.findFirst({
       where: { id, deletedAt: null },
@@ -642,6 +768,69 @@ export class ClientsService {
       userAgent: meta.userAgent,
     });
     return this.findOne(existing.id, actor);
+  }
+
+  /**
+   * 编辑代理信息：country 锁定不可变更（唯一键 clientId+country+agentCompany 的一部分），
+   * agentCompany/agentYears/expectedEffectiveDate 可变更，expiresAt 服务层重算；
+   * shops/products 整体替换（先删后建），不保留旧店铺/产品记录。编辑不触发证书重新生成，
+   * 用户需要自行点击"重新生成"，见与产品侧对齐结论。
+   */
+  async updateAgentInfo(
+    clientId: string,
+    agentInfoId: string,
+    dto: UpdateAgentInfoDto,
+    actor: AuthenticatedUser,
+    meta: RequestMeta,
+  ) {
+    await this.findOne(clientId, actor); // 权限校验：非本人/非可见范围客户直接抛错
+    const agentInfo = await this.prisma.agentInfo.findFirst({
+      where: { id: agentInfoId, clientId },
+    });
+    if (!agentInfo) {
+      throw new NotFoundException('代理信息不存在');
+    }
+
+    if (dto.agentCompany !== agentInfo.agentCompany) {
+      const conflict = await this.prisma.agentInfo.findFirst({
+        where: {
+          clientId,
+          country: agentInfo.country,
+          agentCompany: dto.agentCompany,
+          id: { not: agentInfoId },
+        },
+      });
+      if (conflict) {
+        throw new ConflictException('该客户在此代理国家下已存在使用该代理公司的代理信息');
+      }
+    }
+
+    const expectedEffectiveDate = new Date(dto.expectedEffectiveDate);
+    const expiresAt = new Date(expectedEffectiveDate);
+    expiresAt.setFullYear(expiresAt.getFullYear() + dto.agentYears);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.shop.deleteMany({ where: { agentInfoId } });
+      await tx.agentInfo.update({
+        where: { id: agentInfoId },
+        data: {
+          agentCompany: dto.agentCompany,
+          agentYears: dto.agentYears,
+          expectedEffectiveDate,
+          expiresAt,
+          shops: buildShopsCreateInput(dto.shops, clientId),
+        },
+      });
+    });
+
+    await this.actionLogService.record({
+      userId: actor.id,
+      action: 'UPDATE_AGENT_INFO',
+      detail: JSON.stringify({ clientId, agentInfoId }),
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+    });
+    return this.findOne(clientId, actor);
   }
 
   /**

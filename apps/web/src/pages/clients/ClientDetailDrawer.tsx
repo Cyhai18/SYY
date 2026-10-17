@@ -1,5 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Card, Col, Drawer, Empty, Image, Row, Spin, Tag, message } from 'antd';
+import {
+  Button,
+  Card,
+  Col,
+  Drawer,
+  Empty,
+  Form,
+  Image,
+  Input,
+  Row,
+  Space,
+  Spin,
+  Tag,
+  message,
+} from 'antd';
 import {
   ATTACHMENT_TYPE_LABELS,
   CLIENT_STATUS_LABELS,
@@ -8,7 +22,7 @@ import {
   type ClientDetail,
   type ClientStatus,
 } from '@funtax/shared';
-import { clientsApi } from '../../lib/clients-api';
+import { clientsApi, type UpdateClientPayload } from '../../lib/clients-api';
 import { apiClient } from '../../lib/api-client';
 import { brandColors } from '../../theme';
 
@@ -47,14 +61,36 @@ function InfoItem({
 
 /** "查看资料"入口：以 Drawer 形式只读展示客户基本信息、联系方式、附件，样式对齐新增客户向导；
  * 代理信息不再在此展示，改为在客户列表代理信息子表格的各行单独"查看"（见 AgentInfoDetailDrawer）。 */
+interface EditFormValues {
+  email?: string;
+  remark?: string;
+  nameCn?: string;
+  nameEn?: string;
+  addressCn?: string;
+  provinceEn?: string;
+  cityEn?: string;
+  postalCode?: string;
+  addressEn?: string;
+  contactPerson?: string;
+  legalNameCn?: string;
+  legalNamePinyin?: string;
+  idAddressCn?: string;
+  idPostalCode?: string;
+  idAddressEn?: string;
+}
+
 export function ClientDetailDrawer({ clientId, onClose }: ClientDetailDrawerProps) {
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<ClientDetail | null>(null);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form] = Form.useForm<EditFormValues>();
 
   useEffect(() => {
     if (!clientId) {
       setDetail(null);
+      setEditing(false);
       return;
     }
     setLoading(true);
@@ -64,6 +100,73 @@ export function ClientDetailDrawer({ clientId, onClose }: ClientDetailDrawerProp
       .catch(() => void message.error('客户详情加载失败'))
       .finally(() => setLoading(false));
   }, [clientId]);
+
+  const startEdit = () => {
+    if (!detail) return;
+    form.setFieldsValue({
+      email: detail.email ?? undefined,
+      remark: detail.remark ?? undefined,
+      nameCn: detail.companyInfo?.nameCn,
+      nameEn: detail.companyInfo?.nameEn,
+      addressCn: detail.companyInfo?.addressCn,
+      provinceEn: detail.companyInfo?.provinceEn,
+      cityEn: detail.companyInfo?.cityEn,
+      postalCode: detail.companyInfo?.postalCode,
+      addressEn: detail.companyInfo?.addressEn,
+      contactPerson: detail.companyInfo?.contactPerson,
+      legalNameCn: detail.legalRepInfo?.nameCn,
+      legalNamePinyin: detail.legalRepInfo?.namePinyin,
+      idAddressCn: detail.legalRepInfo?.idAddressCn,
+      idPostalCode: detail.legalRepInfo?.idPostalCode,
+      idAddressEn: detail.legalRepInfo?.idAddressEn,
+    });
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    if (!detail || !clientId) return;
+    const values = await form.validateFields();
+    const payload: UpdateClientPayload = {
+      email: values.email,
+      remark: values.remark,
+      companyInfo:
+        detail.clientType === 'COMPANY'
+          ? {
+              creditCode: detail.companyInfo?.creditCode,
+              nameCn: values.nameCn,
+              nameEn: values.nameEn,
+              addressCn: values.addressCn,
+              provinceEn: values.provinceEn,
+              cityEn: values.cityEn,
+              postalCode: values.postalCode,
+              addressEn: values.addressEn,
+              contactPerson: values.contactPerson,
+            }
+          : undefined,
+      legalRepInfo:
+        detail.clientType === 'INDIVIDUAL' && detail.legalRepInfo
+          ? {
+              nameCn: values.legalNameCn ?? '',
+              namePinyin: values.legalNamePinyin ?? '',
+              idNumber: detail.legalRepInfo.idNumber,
+              idAddressCn: values.idAddressCn ?? '',
+              idPostalCode: values.idPostalCode,
+              idAddressEn: values.idAddressEn,
+            }
+          : undefined,
+    };
+    setSaving(true);
+    try {
+      const updated = await clientsApi.update(clientId, payload);
+      setDetail(updated);
+      setEditing(false);
+      void message.success('保存成功');
+    } catch {
+      void message.error('保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // 附件图片需要走鉴权下载接口（GET /api/files/...，需带 Authorization 头），
   // 不能像普通 <img src> 那样直接用后端返回的相对路径 fileUrl，否则会被当作前端路由解析。
@@ -104,10 +207,166 @@ export function ClientDetailDrawer({ clientId, onClose }: ClientDetailDrawerProp
   };
 
   return (
-    <Drawer open={!!clientId} onClose={onClose} title="客户资料" width={720} destroyOnClose>
+    <Drawer
+      open={!!clientId}
+      onClose={onClose}
+      title="客户资料"
+      width={720}
+      destroyOnClose
+      extra={
+        detail ? (
+          editing ? (
+            <Space>
+              <Button onClick={() => setEditing(false)}>取消</Button>
+              <Button type="primary" loading={saving} onClick={() => void handleSave()}>
+                保存
+              </Button>
+            </Space>
+          ) : (
+            <Button onClick={startEdit}>编辑</Button>
+          )
+        ) : null
+      }
+    >
       <Spin spinning={loading}>
         {!detail ? (
           <Empty description={loading ? '加载中...' : '客户不存在'} />
+        ) : editing ? (
+          <Form<EditFormValues> form={form} layout="vertical">
+            <Card
+              className="form-card form-card--legal"
+              variant="borderless"
+              title={detail.clientType === 'COMPANY' ? '公司信息' : '个人信息'}
+            >
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item label="统一社会信用代码/身份证号（不可修改）">
+                    <Input
+                      disabled
+                      value={
+                        detail.clientType === 'COMPANY'
+                          ? detail.companyInfo?.creditCode
+                          : detail.legalRepInfo?.idNumber
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                {detail.clientType === 'COMPANY' ? (
+                  <>
+                    <Col span={8}>
+                      <Form.Item label="公司中文名" name="nameCn">
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="公司英文名" name="nameEn">
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={24}>
+                      <Form.Item label="公司中文地址" name="addressCn">
+                        <Input.TextArea autoSize />
+                      </Form.Item>
+                    </Col>
+                    <Col span={24}>
+                      <Form.Item label="公司英文地址" name="addressEn">
+                        <Input.TextArea autoSize />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="公司所在省份（英文）" name="provinceEn">
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="公司所在城市（英文）" name="cityEn">
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="邮编" name="postalCode">
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="联系人" name="contactPerson">
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                  </>
+                ) : detail.legalRepInfo ? (
+                  <>
+                    <Col span={8}>
+                      <Form.Item
+                        label="姓名（中文）"
+                        name="legalNameCn"
+                        rules={[{ required: true, message: '请填写姓名' }]}
+                      >
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item
+                        label="姓名（拼音）"
+                        name="legalNamePinyin"
+                        rules={[{ required: true, message: '请填写姓名拼音' }]}
+                      >
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                    <Col span={24}>
+                      <Form.Item
+                        label="身份证地址（中文）"
+                        name="idAddressCn"
+                        rules={[{ required: true, message: '请填写身份证地址' }]}
+                      >
+                        <Input.TextArea autoSize />
+                      </Form.Item>
+                    </Col>
+                    <Col span={24}>
+                      <Form.Item label="身份证地址（英文）" name="idAddressEn">
+                        <Input.TextArea autoSize />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="邮编" name="idPostalCode">
+                        <Input />
+                      </Form.Item>
+                    </Col>
+                  </>
+                ) : null}
+                <Col span={24}>
+                  <Form.Item label="备注" name="remark">
+                    <Input.TextArea autoSize />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+
+            <Card
+              className="form-card form-card--contact"
+              variant="borderless"
+              title="联系方式"
+              style={{ marginTop: 16 }}
+            >
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item label="联系电话（不可修改）">
+                    <Input disabled value={detail.phone} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    label="联系邮箱"
+                    name="email"
+                    rules={[{ required: true, type: 'email', message: '邮箱格式不正确' }]}
+                  >
+                    <Input />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+          </Form>
         ) : (
           <>
             <Card

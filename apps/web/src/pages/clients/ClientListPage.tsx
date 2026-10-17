@@ -5,6 +5,7 @@ import {
   Card,
   DatePicker,
   Drawer,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -18,9 +19,11 @@ import {
   message,
 } from 'antd';
 import type { TablePaginationConfig } from 'antd/es/table';
+import type { MenuProps } from 'antd';
 import {
   DollarCircleOutlined,
   DownloadOutlined,
+  DownOutlined,
   ExportOutlined,
   EyeOutlined,
   FilePdfOutlined,
@@ -270,6 +273,42 @@ export function ClientListPage() {
     }
   }, [filters]);
 
+  const handleExportCertificates = useCallback(async () => {
+    setExporting(true);
+    void message.info('证书打包可能需要一些时间，请耐心等待下载完成');
+    try {
+      const { blob, fileName, truncated } = await clientsApi.exportCertificatesZip(filters);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName ?? '证书.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      if (truncated) {
+        void message.warning('当前筛选范围证书数量超过 500 份，已为您打包前 500 份');
+      }
+    } catch (err) {
+      void message.error(err instanceof Error ? err.message : '导出失败，请重试');
+    } finally {
+      setExporting(false);
+    }
+  }, [filters]);
+
+  const exportMenuItems: MenuProps['items'] = [
+    { key: 'clients', label: '导出客户列表' },
+    { key: 'certificates', label: '导出证书' },
+  ];
+
+  const handleExportMenuClick: MenuProps['onClick'] = ({ key }) => {
+    if (key === 'clients') {
+      void handleExport();
+    } else if (key === 'certificates') {
+      void handleExportCertificates();
+    }
+  };
+
   const handleDownloadCertificate = useCallback(
     async (certificateId: string) => {
       setDownloadingId(certificateId);
@@ -476,13 +515,14 @@ export function ClientListPage() {
               <Button icon={<UploadOutlined />} onClick={() => setImportModalOpen(true)}>
                 批量导入
               </Button>
-              <Button
-                icon={<ExportOutlined />}
-                loading={exporting}
-                onClick={() => void handleExport()}
+              <Dropdown
+                menu={{ items: exportMenuItems, onClick: handleExportMenuClick }}
+                disabled={exporting}
               >
-                导出
-              </Button>
+                <Button icon={<ExportOutlined />} loading={exporting}>
+                  导出 <DownOutlined />
+                </Button>
+              </Dropdown>
               <Button
                 type="primary"
                 icon={<PlusOutlined />}

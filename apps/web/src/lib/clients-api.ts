@@ -1,4 +1,5 @@
 import type {
+  AgentCompany,
   AgentCountry,
   AgentInfoPayload,
   CertificateRecord,
@@ -11,6 +12,7 @@ import type {
   CompanyInfoPayload,
   DuplicateCheckResult,
   LegalRepresentativePayload,
+  ShopPayload,
 } from '@funtax/shared';
 import { apiClient } from './api-client';
 
@@ -21,6 +23,22 @@ export interface AppendAgentInfoPayload {
   companyInfo: CompanyInfoPayload;
   legalRepInfo?: LegalRepresentativePayload;
   agentInfos: AgentInfoPayload[];
+}
+
+/** 编辑客户基础信息负载：`uniqueIdentifier`/`clientType` 锁定不可变更，不在此结构内。 */
+export interface UpdateClientPayload {
+  email?: string;
+  remark?: string;
+  companyInfo?: CompanyInfoPayload;
+  legalRepInfo?: LegalRepresentativePayload;
+}
+
+/** 编辑代理信息负载：`country` 锁定不可变更；shops 整体替换，不支持增量增删单条店铺。 */
+export interface UpdateAgentInfoPayload {
+  expectedEffectiveDate: string;
+  agentYears: number;
+  agentCompany: AgentCompany;
+  shops: ShopPayload[];
 }
 
 export interface ListClientsParams {
@@ -85,6 +103,14 @@ export const clientsApi = {
 
   get: (id: string) => apiClient.get<ClientDetail>(`/clients/${id}`),
 
+  /** 编辑客户基础信息：邮箱/备注/公司信息/法人信息，`uniqueIdentifier`/`clientType` 锁定不可变更。 */
+  update: (id: string, payload: UpdateClientPayload) =>
+    apiClient.patch<ClientDetail>(`/clients/${id}`, payload),
+
+  /** 编辑代理信息：`country` 锁定不可变更，代理公司/年限/生效日期/店铺可编辑，保存不触发重新生成证书。 */
+  updateAgentInfo: (clientId: string, agentInfoId: string, payload: UpdateAgentInfoPayload) =>
+    apiClient.patch<ClientDetail>(`/clients/${clientId}/agent-infos/${agentInfoId}`, payload),
+
   /**
    * 证件 OCR 识别成功后触发的查重：命中已存在客户时返回其 companyInfo/legalRepInfo，用于前端回填表单并切换到追加模式。
    * `owned: false` 表示命中的客户存在但归属于其他用户，此时 `client` 恒为 `null`，前端应阻断流程、禁止继续新增/修改。
@@ -145,4 +171,11 @@ export const clientsApi = {
   /** 导出客户列表为 Excel，筛选口径与 `list` 一致（分页参数不生效，后端按 5000 条上限阻断）。 */
   exportClients: (params: Omit<ListClientsParams, 'page' | 'pageSize'> = {}) =>
     apiClient.getBinary(`/clients/export${buildQuery(params)}`),
+
+  /**
+   * 按当前筛选范围把代理证书打包成 ZIP 下载，筛选口径与 `list`/`exportClients` 一致。
+   * 超过 500 份时后端不报错，取前 500 份打包，并通过返回值 `truncated` 告知调用方弹提示。
+   */
+  exportCertificatesZip: (params: Omit<ListClientsParams, 'page' | 'pageSize'> = {}) =>
+    apiClient.getBinary(`/clients/export-certificates${buildQuery(params)}`),
 };

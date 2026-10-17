@@ -19,7 +19,7 @@ import { AttachmentType, ClientStatus } from '@prisma/client';
 import type { Response } from 'express';
 import { ClientsService, type ClientAttachmentInput } from './clients.service';
 import { AppendAgentInfoDto, ClientPayloadDto } from './dto/client-payload.dto';
-import { UpdateClientDto } from './dto/update-client.dto';
+import { UpdateAgentInfoDto, UpdateClientDto } from './dto/update-client.dto';
 import { ListClientsDto } from './dto/list-clients.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ReqMeta } from '../common/decorators/request-meta.decorator';
@@ -157,6 +157,28 @@ export class ClientsController {
   }
 
   /**
+   * 按当前筛选范围把代理证书打包成 ZIP 下载，筛选口径与 `export`/`findAll` 一致。
+   * 超过 500 份时不报错，取前 500 份打包，并通过 `X-Export-Truncated` 响应头告知前端弹提示。
+   * 必须声明在 `:id` 路由之前，否则 "export-certificates" 会被当成 :id 参数匹配掉。
+   */
+  @Get('export-certificates')
+  async exportCertificates(
+    @Query() query: ListClientsDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ) {
+    const { buffer, truncated } = await this.clientsService.exportCertificatesZip(query, user);
+    const fileName = `证书_${this.formatExportTimestamp()}.zip`;
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+      'Access-Control-Expose-Headers': 'X-Export-Truncated',
+      'X-Export-Truncated': String(truncated),
+    });
+    res.send(buffer);
+  }
+
+  /**
    * 供证件 OCR 识别成功后触发的查重：统一信用代码/身份证号禁止手动编辑，只能由 OCR 识别得出，
    * 命中已存在客户时返回其 companyInfo/legalRepInfo 供前端回填表单，并切换到"追加代理信息"模式。
    * 必须声明在 `:id` 路由之前，否则会被 `:id` 吞掉。
@@ -225,6 +247,21 @@ export class ClientsController {
     @ReqMeta() meta: RequestMeta,
   ) {
     return this.clientsService.update(id, dto, user, meta);
+  }
+
+  /**
+   * 编辑代理信息：country 锁定不可变更，agentCompany/agentYears/expectedEffectiveDate/shops 可编辑。
+   * 保存不触发证书重新生成，用户需手动点击"重新生成"。
+   */
+  @Patch(':id/agent-infos/:agentInfoId')
+  async updateAgentInfo(
+    @Param('id') id: string,
+    @Param('agentInfoId') agentInfoId: string,
+    @Body() dto: UpdateAgentInfoDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @ReqMeta() meta: RequestMeta,
+  ) {
+    return this.clientsService.updateAgentInfo(id, agentInfoId, dto, user, meta);
   }
 
   @Delete(':id')
