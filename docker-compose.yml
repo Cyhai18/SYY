@@ -29,10 +29,11 @@ services:
       - 'host.docker.internal:host-gateway' # 让容器能访问宿主机上原生安装的 MySQL/Redis
     environment:
       DATABASE_URL: mysql://funtax:${MYSQL_PASSWORD}@host.docker.internal:3306/funtax
-      REDIS_URL: redis://host.docker.internal:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD}@host.docker.internal:6379
       OCR_SERVICE_URL: http://ocr-service:8000
       DOC_SERVICE_URL: http://doc-service:8001
       UPLOAD_DIR: /app/uploads
+      CORS_ORIGIN: ${CORS_ORIGIN}
     volumes:
       - uploads-data:/app/uploads
 

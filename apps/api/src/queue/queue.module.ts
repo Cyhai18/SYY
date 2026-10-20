@@ -24,6 +24,14 @@ import {
       provide: REDIS_CONNECTION,
       useFactory: (): IORedis => {
         const url = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379';
+        // 生产环境下 Redis 可能监听在容器网桥网段（而非仅 127.0.0.1，见 docs/docker-deploy.md
+        // 第四节），必须设置密码认证，否则同网段内任意进程都能直接读写队列数据。
+        const isProd = process.env.NODE_ENV === 'production';
+        if (isProd && !new URL(url).password) {
+          throw new Error(
+            '生产环境 REDIS_URL 必须包含密码（格式 redis://:<password>@host:port），禁止匿名访问 Redis。',
+          );
+        }
         // BullMQ 要求阻塞命令的连接必须关闭 maxRetriesPerRequest，否则会抛出异常。
         return new IORedis(url, { maxRetriesPerRequest: null });
       },

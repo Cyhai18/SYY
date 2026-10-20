@@ -286,10 +286,11 @@ services:
       - 'host.docker.internal:host-gateway'   # 让容器能访问宿主机上原生安装的 MySQL/Redis
     environment:
       DATABASE_URL: mysql://funtax:${MYSQL_PASSWORD}@host.docker.internal:3306/funtax
-      REDIS_URL: redis://host.docker.internal:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD}@host.docker.internal:6379
       OCR_SERVICE_URL: http://ocr-service:8000
       DOC_SERVICE_URL: http://doc-service:8001
       UPLOAD_DIR: /app/uploads
+      CORS_ORIGIN: https://your-domain.com
     volumes:
       - uploads-data:/app/uploads
 
@@ -333,19 +334,50 @@ apt install -y mysql-server redis-server
 curl -fsSL https://get.docker.com | sh
 apt install -y docker-compose-plugin
 
-# 2. 建库建用户（原生部署方案同款步骤），并放开 Docker 网桥网段访问权限
+# 2. 建库建用户（原生部署方案同款步骤）
 mysql -u root -p <<'SQL'
 CREATE DATABASE funtax CHARACTER SET utf8mb4;
 CREATE USER 'funtax'@'172.16.0.0/255.240.0.0' IDENTIFIED BY '<你的密码>';
 GRANT ALL PRIVILEGES ON funtax.* TO 'funtax'@'172.16.0.0/255.240.0.0';
 FLUSH PRIVILEGES;
 SQL
-# 修改 /etc/mysql/mysql.conf.d/mysqld.cnf 的 bind-address 为 0.0.0.0，
-# 修改 /etc/redis/redis.conf 的 bind 同理，然后用防火墙只放行 172.16.0.0/12 访问 3306/6379
-# （用 172.16.0.0/12 而不是 172.17.0.0/16，是因为 compose 没指定 subnet 时 Docker 会按默认
-# 地址池顺序分配网段，实际不一定落在 172.17.x，见上方「四、docker-compose.yml」的说明）
-# （具体见「七、数据库/Redis：数据库/Redis 用宿主机原生部署」）
+
+# 2.1 先配置防火墙规则，再放开监听面（顺序不能反，避免出现监听 0.0.0.0 但防火墙
+#     未就位的暴露窗口期）。用 172.16.0.0/12 而不是更精确的网段，是因为 compose
+#     没指定 subnet 时 Docker 会按默认地址池顺序分配网段，实际不一定落在 172.17.x，
+#     见上方「四、docker-compose.yml」的说明。
+apt install -y ufw
+ufw allow 22/tcp                                   # SSH，建议改成只放行你的固定公网 IP
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow from 172.16.0.0/12 to any port 3306 proto tcp
+ufw allow from 172.16.0.0/12 to any port 6379 proto tcp
+ufw --force enable
+ufw status verbose                                 # 确认上面几条规则已生效
+
+# 2.2 Redis 设置密码（必须先于/同时于下面的 bind 改动完成，不能等）。
+#     密码要与根目录 .env 的 REDIS_PASSWORD 一致。
+REDIS_PASS='<换成你的 Redis 密码，与 .env 的 REDIS_PASSWORD 一致>'
+if grep -q '^requirepass' /etc/redis/redis.conf; then
+  sed -i "s/^requirepass.*/requirepass ${REDIS_PASS}/" /etc/redis/redis.conf
+elif grep -q '^# *requirepass' /etc/redis/redis.conf; then
+  sed -i "s/^# *requirepass.*/requirepass ${REDIS_PASS}/" /etc/redis/redis.conf
+else
+  echo "requirepass ${REDIS_PASS}" >> /etc/redis/redis.conf
+fi
+
+# 2.3 再放开监听面：MySQL/Redis 的 bind 地址从 127.0.0.1 改成 0.0.0.0，
+#     使 Docker 网桥内的 api 容器能连上宿主机数据库（具体原理见「七、数据库/Redis：
+#     数据库/Redis 用宿主机原生部署」）。此时已有 2.1 的防火墙规则 + 2.2 的密码兜底，
+#     不会出现"裸奔公网"的窗口期。
+sed -i 's/^bind-address.*/bind-address = 0.0.0.0/' /etc/mysql/mysql.conf.d/mysqld.cnf
+sed -i 's/^bind .*/bind 0.0.0.0/' /etc/redis/redis.conf
 systemctl restart mysql redis-server
+
+# 2.4 重启后立即验证：确认 3306/6379 只在预期网段可达，而不是监听所有地址却无防护。
+#     也可以换一台不在 172.16.0.0/12 网段内的机器，尝试连接确认连不通。
+ss -tlnp | grep -E '3306|6379'
+redis-cli -a "${REDIS_PASS}" ping                  # 预期返回 PONG
 
 # 3. 拉代码，准备 .env（见「八、用 .env 管理环境变量」）
 git clone <仓库地址> /data/funtax && cd /data/funtax
@@ -455,7 +487,7 @@ HTTP-01/TLS-ALPN-01 挑战申请证书；本地测试没有真实域名时可以
 
 不要把真实密钥（数据库密码、JWT secret）写进 `docker-compose.yml` 提交到仓库。约定两层 `.env`：
 
-- **根目录 `.env`**：只放 `docker-compose.yml` 里用 `${VAR}` 插值的变量——现在 MySQL/Redis 是宿主机原生进程，`docker-compose.yml` 里唯一还需要插值的是 `api` 服务连接宿主机 MySQL 用的 `MYSQL_PASSWORD`（对应「五、部署步骤」建库建用户时设置的 `funtax` 用户密码），`docker compose` 命令会自动读取同目录下的 `.env` 文件，不需要显式 `env_file` 声明。
+- **根目录 `.env`**：只放 `docker-compose.yml` 里用 `${VAR}` 插值的变量——现在 MySQL/Redis 是宿主机原生进程，`docker-compose.yml` 里需要插值的是 `api` 服务连接宿主机 MySQL 用的 `MYSQL_PASSWORD`（对应「五、部署步骤」建库建用户时设置的 `funtax` 用户密码）、连接宿主机 Redis 用的 `REDIS_PASSWORD`（对应 Redis `requirepass`）、以及跨域白名单 `CORS_ORIGIN`，`docker compose` 命令会自动读取同目录下的 `.env` 文件，不需要显式 `env_file` 声明。
 - **`apps/api/.env.production`**：放 `api` 容器运行时需要的全部环境变量（`DATABASE_URL`、`REDIS_URL`、`JWT_ACCESS_SECRET`、`JWT_REFRESH_SECRET`、`UPLOAD_DIR` 等），通过 compose 里 `api` 服务的 `env_file: apps/api/.env.production` 加载到容器内，内容基本沿用 `apps/api/.env.example` 的字段，生产环境记得把 `JWT_*` 换成 `openssl rand -hex 32` 生成的随机值。
 
 仓库根目录新增 `.env.example`（可提交，仅列变量名不含真实值）：
@@ -464,6 +496,10 @@ HTTP-01/TLS-ALPN-01 挑战申请证书；本地测试没有真实域名时可以
 # 根目录 .env.example，复制为 .env 后按需修改
 # 对应宿主机原生 MySQL 里 funtax 用户的密码（见「五、部署步骤」建库建用户）
 MYSQL_PASSWORD=changeme
+# 对应宿主机原生 Redis 的 requirepass 密码（见「七、数据库/Redis」）
+REDIS_PASSWORD=changeme
+# 跨域白名单，正式域名，逗号分隔支持多个
+CORS_ORIGIN=https://your-domain.com
 ```
 
 两个要点：
@@ -479,8 +515,10 @@ MYSQL_PASSWORD=changeme
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `MYSQL_PASSWORD` | 是 | 宿主机原生 MySQL 的 `funtax` 用户密码（见「五、部署步骤」建库建用户），`api` 服务拼接 `DATABASE_URL` 时用到 |
+| `REDIS_PASSWORD` | 是 | 宿主机原生 Redis 的 `requirepass` 密码（见「七、数据库/Redis」），`api` 服务拼接 `REDIS_URL` 时用到，不配置 `api` 容器启动会直接报错 |
+| `CORS_ORIGIN` | 是 | 跨域白名单，正式域名，逗号分隔支持多个，不配置 `api` 容器启动会直接报错 |
 
-**② `apps/api/.env.production`**（`api` 容器通过 `env_file` 加载；其中 `DATABASE_URL`/`REDIS_URL`/`OCR_SERVICE_URL`/`DOC_SERVICE_URL`/`UPLOAD_DIR` 已在 `docker-compose.yml` 的 `api.environment` 里按容器化网络拓扑写死覆盖，见「四、docker-compose.yml」，因此这几个字段在 `.env.production` 里即使留着示例值也不会生效，真正必须手工配置的只有 `JWT_*` 两项）：
+**② `apps/api/.env.production`**（`api` 容器通过 `env_file` 加载；其中 `DATABASE_URL`/`REDIS_URL`/`OCR_SERVICE_URL`/`DOC_SERVICE_URL`/`UPLOAD_DIR`/`CORS_ORIGIN` 已在 `docker-compose.yml` 的 `api.environment` 里按容器化网络拓扑写死覆盖，见「四、docker-compose.yml」，因此这几个字段在 `.env.production` 里即使留着示例值也不会生效，真正必须手工配置的只有 `JWT_*` 两项）：
 
 | 变量 | 必填 | 默认值/兜底 | 说明 |
 |---|---|---|---|
@@ -488,7 +526,8 @@ MYSQL_PASSWORD=changeme
 | `JWT_REFRESH_SECRET` | **是** | 同上 | 同上 |
 | `PORT` | 否 | `3000` | 容器内监听端口，与 Dockerfile `EXPOSE 3000` 一致，无特殊需求不用改 |
 | `DATABASE_URL` | 否（容器化场景被 compose 覆盖） | — | 原生部署（`docs/tencent-cloud-deploy.md`）场景下才需要手填 `mysql://funtax:<密码>@127.0.0.1:3306/funtax` |
-| `REDIS_URL` | 否（容器化场景被 compose 覆盖） | `redis://127.0.0.1:6379` | 同上，仅原生部署场景需要 |
+| `REDIS_URL` | 否（容器化场景被 compose 覆盖） | `redis://127.0.0.1:6379` | 原生部署场景需要手填，且生产环境必须带密码（`redis://:<password>@host:port`），否则启动直接报错（`apps/api/src/queue/queue.module.ts`） |
+| `CORS_ORIGIN` | 否（容器化场景被 compose 覆盖） | 无兜底，生产环境不配置直接启动报错（`apps/api/src/main.ts`） | 原生部署场景需要手填正式域名，逗号分隔支持多个 |
 | `OCR_SERVICE_URL` | 否（容器化场景被 compose 覆盖） | 未配置则优雅降级为"未识别"，不阻断流程 | 同上 |
 | `DOC_SERVICE_URL` | 否（容器化场景被 compose 覆盖） | 未配置则生成证书接口报错，不影响其他功能 | 同上 |
 | `UPLOAD_DIR` | 否（容器化场景被 compose 覆盖为 `/app/uploads`） | `<进程启动目录>/uploads` | 客户附件 + 证书 PDF 落盘根目录，原生部署务必指向持久化磁盘路径 |

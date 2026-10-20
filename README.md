@@ -32,7 +32,7 @@
    ```
 
    - 目标数据库需提前手动创建（Prisma migrate 只建表，不建库）。
-   - 生产环境（`NODE_ENV=production`）必须额外配置 `JWT_ACCESS_SECRET` 与 `JWT_REFRESH_SECRET`，否则启动时会直接报错拒绝运行（本地开发有默认兜底值，无需配置）。
+   - 生产环境（`NODE_ENV=production`）必须额外配置 `JWT_ACCESS_SECRET`、`JWT_REFRESH_SECRET`、`CORS_ORIGIN`（正式域名，逗号分隔支持多个），且 `REDIS_URL` 必须带密码（`redis://:<password>@host:port`），否则启动时会直接报错拒绝运行（本地开发有默认兜底值，无需配置）。
 
 3. 生成 Prisma Client 并建表：
 

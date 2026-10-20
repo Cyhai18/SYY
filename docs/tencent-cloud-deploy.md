@@ -109,14 +109,21 @@ vim apps/api/.env
 PORT=3000
 NODE_ENV=production
 DATABASE_URL="mysql://funtax:<你的密码>@127.0.0.1:3306/funtax"
-REDIS_URL=redis://127.0.0.1:6379
+# 生产环境必须带密码（见下方「三、初始化 MySQL 数据库」之后记得给 Redis 也设密码），
+# 格式 redis://:<password>@host:port，不带密码启动会直接报错
+REDIS_URL=redis://:<你的Redis密码>@127.0.0.1:6379
 OCR_SERVICE_URL=http://127.0.0.1:8000
 DOC_SERVICE_URL=http://127.0.0.1:8001
 UPLOAD_DIR=/data/funtax-uploads
 # 生产环境必须配置，否则启动直接报错，用 `openssl rand -hex 32` 各生成一个
 JWT_ACCESS_SECRET=<随机字符串>
 JWT_REFRESH_SECRET=<随机字符串>
+# 生产环境必须配置为正式域名，否则启动直接报错，逗号分隔支持多个
+CORS_ORIGIN=https://<你的正式域名>
 ```
+
+Redis 设密码：编辑 `/etc/redis/redis.conf`，设置 `requirepass <你的Redis密码>`，然后
+`systemctl restart redis-server`。
 
 ```bash
 mkdir -p /data/funtax-uploads
@@ -226,8 +233,10 @@ nginx -t   # 测试配置无误
 systemctl reload nginx
 ```
 
-同时把 `apps/api/src/main.ts` 里的 CORS 白名单从 `http://localhost:5173` 改为你的正式域名
-（因为现在前端和 API 同源走 Nginx 代理，实际上线后可以不依赖 CORS，但保留配置以防跨域调用）。
+同时在 `apps/api/.env` 里配置 `CORS_ORIGIN=https://<你的正式域名>`（逗号分隔支持多个域名）。
+`NODE_ENV=production` 时这一项是必填项，不配置会直接启动报错——因为现在前端和 API 同源走
+Nginx 代理，实际上线后可以不依赖 CORS，但保留配置以防跨域调用，且避免误留本地开发的
+`localhost` 白名单导致线上请求被拒。
 
 ## 八、（推荐）申请免费 HTTPS 证书
 
