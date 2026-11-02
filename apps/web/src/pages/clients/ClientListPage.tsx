@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
 import dayjs from 'dayjs';
 import {
   Badge,
@@ -56,6 +56,8 @@ import {
 } from '@funtax/shared';
 import { clientsApi, type ListClientsParams } from '../../lib/clients-api';
 import { clientImportApi, type ImportJob, type ImportJobStatus } from '../../lib/client-import-api';
+import { usersApi, type UserOption } from '../../lib/users-api';
+import { useAuthStore } from '../../store/auth-store';
 import { brandColors } from '../../theme';
 import { ClientDetailDrawer } from './ClientDetailDrawer';
 import { AgentInfoDetailDrawer } from './AgentInfoDetailDrawer';
@@ -68,6 +70,8 @@ interface SearchFormValues {
   certificateStatus?: CertificateStatusFilter;
   agentCountry?: ListClientsParams['agentCountry'];
   submittedRange?: Parameters<NonNullable<ComponentProps<typeof RangePicker>['onChange']>>[0];
+  /** 录入账户（负责人），仅 ADMIN/SUPERADMIN 使用 */
+  ownerId?: string;
 }
 
 const STATUS_COLOR: Record<ClientStatus, string> = {
@@ -127,6 +131,9 @@ interface CertificateTarget {
 
 export function ClientListPage() {
   const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+  // 录入账户列/筛选项仅对管理员可见；普通用户列表本身已按本人隔离，无需展示。
+  const canViewOwner = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN';
   const [form] = Form.useForm<SearchFormValues>();
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ClientListItem[]>([]);
@@ -157,8 +164,128 @@ export function ClientListPage() {
   const [importRecordsPage, setImportRecordsPage] = useState(1);
   const [importRecordsPageSize, setImportRecordsPageSize] = useState(10);
   const [importRecordsStatus, setImportRecordsStatus] = useState<ImportJobStatus | undefined>();
+  // 录入账户下拉：远程搜索 + 滚动分页，适配用户量大的场景
+  const [ownerOptions, setOwnerOptions] = useState<UserOption[]>([]);
+  const [ownerOptionsLoading, setOwnerOptionsLoading] = useState(false);
+  const ownerOptionsPageRef = useRef(0);
+  const ownerOptionsTotalRef = useRef(0);
+  const ownerOptionsLoadedCountRef = useRef(0);
+  const ownerOptionsKeywordRef = useRef('');
+  const ownerOptionsLoadingMoreRef = useRef(false);
+  const ownerSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 递增序号：丢弃过期的搜索响应，避免快速输入时旧结果覆盖新结果
+  const ownerOptionsReqIdRef = useRef(0);
+  // 已选中的录入账户单独缓存，避免远程搜索/重置后 Select 只显示 id
+  const selectedOwnerRef = useRef<UserOption | null>(null);
   // 已提交的筛选条件：仅在点击"查询"按钮（表单 onFinish）时更新，翻页/切页大小时复用
   const [filters, setFilters] = useState<Omit<ListClientsParams, 'page' | 'pageSize'>>({});
+
+  const OWNER_OPTIONS_PAGE_SIZE = 20;
+
+  /** 格式化为「昵称（手机号）」，同名时便于区分 */
+  const formatOwnerLabel = useCallback((u: UserOption) => `${u.nickname}（${u.phone}）`, []);
+
+  /**
+   * 合并接口结果与已选项：reset 时以接口结果为主，但保证当前选中项始终可展示标签；
+   * 追加时去重合并。
+   */
+  const mergeOwnerOptions = useCallback(
+    (incoming: UserOption[], reset: boolean, prev: UserOption[]) => {
+      const selected = selectedOwnerRef.current;
+      if (reset) {
+        if (!selected) return incoming;
+        if (incoming.some((u) => u.id === selected.id)) return incoming;
+        return [selected, ...incoming];
+      }
+      const seen = new Set(prev.map((u) => u.id));
+      const appended = incoming.filter((u) => !seen.has(u.id));
+      return [...prev, ...appended];
+    },
+    [],
+  );
+
+  /**
+   * 加载录入账户选项。reset=true 时替换列表（搜索/首次打开）；
+   * reset=false 时追加（下拉滚动触底）。用 ref 持有分页游标，避免闭包过期。
+   */
+  const loadOwnerOptions = useCallback(
+    async (opts?: { keyword?: string; reset?: boolean }) => {
+      if (!canViewOwner) return;
+      const reset = opts?.reset ?? false;
+      const keyword = (opts?.keyword ?? ownerOptionsKeywordRef.current).trim();
+
+      if (!reset) {
+        // 已加载完或正在加载更多时不再发请求
+        if (ownerOptionsLoadingMoreRef.current) return;
+        if (
+          ownerOptionsPageRef.current > 0 &&
+          ownerOptionsLoadedCountRef.current >= ownerOptionsTotalRef.current
+        ) {
+          return;
+        }
+        ownerOptionsLoadingMoreRef.current = true;
+      }
+
+      const nextPage = reset ? 1 : ownerOptionsPageRef.current + 1;
+      const reqId = ++ownerOptionsReqIdRef.current;
+      setOwnerOptionsLoading(true);
+      try {
+        const result = await usersApi.listOptions({
+          page: nextPage,
+          pageSize: OWNER_OPTIONS_PAGE_SIZE,
+          keyword: keyword || undefined,
+        });
+        // 丢弃过期响应（例如快速改搜索词后，更早发出的请求后返回）
+        if (reqId !== ownerOptionsReqIdRef.current) return;
+        ownerOptionsKeywordRef.current = keyword;
+        ownerOptionsPageRef.current = result.page;
+        ownerOptionsTotalRef.current = result.total;
+        setOwnerOptions((prev) => {
+          const next = mergeOwnerOptions(result.items, reset, prev);
+          // loadedCount 只统计接口实际拉到的数量（不含为展示而 prepend 的已选项）
+          ownerOptionsLoadedCountRef.current = reset
+            ? result.items.length
+            : Math.min(ownerOptionsLoadedCountRef.current + result.items.length, result.total);
+          return next;
+        });
+      } catch {
+        if (reqId !== ownerOptionsReqIdRef.current) return;
+        if (reset) {
+          setOwnerOptions(selectedOwnerRef.current ? [selectedOwnerRef.current] : []);
+          ownerOptionsLoadedCountRef.current = 0;
+        }
+      } finally {
+        if (reqId === ownerOptionsReqIdRef.current) {
+          setOwnerOptionsLoading(false);
+          ownerOptionsLoadingMoreRef.current = false;
+        }
+      }
+    },
+    [canViewOwner, mergeOwnerOptions],
+  );
+
+  /** 远程搜索防抖：输入停 300ms 后再请求，避免每个字符都打接口 */
+  const handleOwnerSearch = useCallback(
+    (value: string) => {
+      if (ownerSearchTimerRef.current) clearTimeout(ownerSearchTimerRef.current);
+      ownerSearchTimerRef.current = setTimeout(() => {
+        void loadOwnerOptions({ keyword: value, reset: true });
+      }, 300);
+    },
+    [loadOwnerOptions],
+  );
+
+  /** 下拉触底加载下一页 */
+  const handleOwnerPopupScroll = useCallback(
+    (e: { target: EventTarget }) => {
+      const target = e.target as HTMLDivElement;
+      const nearBottom = target.scrollTop + target.offsetHeight >= target.scrollHeight - 24;
+      if (nearBottom) {
+        void loadOwnerOptions({ reset: false });
+      }
+    },
+    [loadOwnerOptions],
+  );
 
   const load = useCallback(
     async (overrides?: { page?: number; pageSize?: number } & Partial<ListClientsParams>) => {
@@ -370,6 +497,13 @@ export function ClientListPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 组件卸载时清掉搜索防抖定时器
+  useEffect(() => {
+    return () => {
+      if (ownerSearchTimerRef.current) clearTimeout(ownerSearchTimerRef.current);
+    };
+  }, []);
+
   const handleTableChange = (pagination: TablePaginationConfig) => {
     void load({ page: pagination.current, pageSize: pagination.pageSize });
   };
@@ -417,6 +551,7 @@ export function ClientListPage() {
       agentCountry: values.agentCountry,
       submittedFrom: values.submittedRange?.[0]?.format('YYYY-MM-DD'),
       submittedTo: values.submittedRange?.[1]?.format('YYYY-MM-DD'),
+      ...(canViewOwner ? { ownerId: values.ownerId } : {}),
     };
     setFilters(nextFilters);
     void load({ page: 1, ...nextFilters });
@@ -474,6 +609,44 @@ export function ClientListPage() {
               {/* 允许只选其中一端：只选开始日期表示查到最新，只选结束日期表示从最早查起 */}
               <RangePicker allowEmpty={[true, true]} />
             </Form.Item>
+            {canViewOwner ? (
+              <Form.Item name="ownerId" label="录入账户" style={{ marginBottom: 0 }}>
+                <Select
+                  allowClear
+                  showSearch
+                  filterOption={false}
+                  loading={ownerOptionsLoading}
+                  placeholder="搜索昵称/手机号"
+                  style={{ width: 240 }}
+                  notFoundContent={ownerOptionsLoading ? '加载中…' : '无匹配账户'}
+                  onSearch={handleOwnerSearch}
+                  onPopupScroll={handleOwnerPopupScroll}
+                  onChange={(value: string | undefined) => {
+                    if (!value) {
+                      selectedOwnerRef.current = null;
+                      return;
+                    }
+                    const hit = ownerOptions.find((u) => u.id === value) ?? null;
+                    selectedOwnerRef.current = hit;
+                  }}
+                  onOpenChange={(open) => {
+                    // 首次展开或关闭后再次展开且列表为空时加载第一页
+                    if (open && ownerOptionsPageRef.current === 0) {
+                      void loadOwnerOptions({ keyword: '', reset: true });
+                    }
+                    // 关闭时若之前在搜关键词，清回默认列表，便于下次浏览
+                    if (!open && ownerOptionsKeywordRef.current) {
+                      if (ownerSearchTimerRef.current) clearTimeout(ownerSearchTimerRef.current);
+                      void loadOwnerOptions({ keyword: '', reset: true });
+                    }
+                  }}
+                  options={ownerOptions.map((u) => ({
+                    value: u.id,
+                    label: formatOwnerLabel(u),
+                  }))}
+                />
+              </Form.Item>
+            ) : null}
           </Space>
 
           <div
@@ -493,6 +666,7 @@ export function ClientListPage() {
               <Button
                 onClick={() => {
                   form.resetFields();
+                  selectedOwnerRef.current = null;
                   setFilters({});
                   void load({
                     page: 1,
@@ -502,6 +676,7 @@ export function ClientListPage() {
                     agentCountry: undefined,
                     submittedFrom: undefined,
                     submittedTo: undefined,
+                    ownerId: undefined,
                   });
                 }}
               >
@@ -769,12 +944,17 @@ export function ClientListPage() {
                 <Tag color={STATUS_COLOR[v]}>{CLIENT_STATUS_LABELS[v]}</Tag>
               ),
             },
-            // {
-            //   title: '代理信息',
-            //   dataIndex: 'agentInfos',
-            //   width: 100,
-            //   render: (v: AgentInfoSummary[]) => (v.length > 0 ? `${v.length} 条` : '—'),
-            // },
+            // 录入账户（负责人）列仅 ADMIN/SUPERADMIN 可见；列表接口始终返回 ownerNickname。
+            ...(canViewOwner
+              ? [
+                  {
+                    title: '录入账户',
+                    dataIndex: 'ownerNickname' as const,
+                    minWidth: 120,
+                    render: (_: unknown, r: ClientListItem) => r.ownerNickname || '—',
+                  },
+                ]
+              : []),
             {
               title: '操作',
               key: 'action',

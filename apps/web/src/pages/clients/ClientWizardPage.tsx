@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Form, Space, Steps, message } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import type { ClientPayload } from '@funtax/shared';
+import { normalizeIdentifier, type ClientPayload } from '@funtax/shared';
 import { useClientWizardStore } from '../../store/client-wizard-store';
 import { clientsApi } from '../../lib/clients-api';
+import { runWizardDuplicateCheck } from './hooks/useDuplicateCheck';
 import { StepType } from './steps/StepType';
 import { StepCompany } from './steps/StepCompany';
 import { StepLegalRep } from './steps/StepLegalRep';
@@ -48,32 +49,42 @@ export function ClientWizardPage() {
   const goPrev = () => setCurrent(resolvePrevStep(current, clientType));
 
   const goNext = async () => {
-    const state = useClientWizardStore.getState();
-    // StepType（current === WIZARD_STEP.TYPE）由卡片点击直接跳转，goNext 不会在该步被调用（footer 按钮仅在 current > 0 时渲染）
+    // StepType 由卡片点击跳转；证件选填；唯一标识靠 Form 校验位 + 下一步强制查重（不依赖失焦）。
     if (current === WIZARD_STEP.COMPANY) {
-      if (!state.businessLicenseFile) {
-        void message.error('请上传营业执照');
-        return;
-      }
       try {
         await companyForm.validateFields();
       } catch {
-        return; // antd 已在对应字段下标红提示，无需再弹全局 message
+        return;
       }
-      // 公司客户从"公司信息"直接跳到"代理信息"，不再经过"个人信息"
+      const creditCode = companyForm.getFieldValue('creditCode') as string | undefined;
+      const dup = await runWizardDuplicateCheck({
+        value: creditCode ?? '',
+        fieldLabel: '统一社会信用代码',
+        target: 'company',
+        form: companyForm,
+        returnToStepOnExitAppend: WIZARD_STEP.COMPANY,
+      });
+      if (dup === 'blocked') return;
+      if (dup === 'appended') return; // hydrateFromExisting 已跳到代理信息步
       setCurrent(isCompany ? WIZARD_STEP.AGENT_INFO : WIZARD_STEP.LEGAL_REP);
       return;
     }
     if (current === WIZARD_STEP.LEGAL_REP) {
-      if (!state.idCardFrontFile || !state.idCardBackFile) {
-        void message.error('请上传身份证人像面和国徽面');
-        return;
-      }
       try {
         await legalRepForm.validateFields();
       } catch {
         return;
       }
+      const idNumber = legalRepForm.getFieldValue('idNumber') as string | undefined;
+      const dup = await runWizardDuplicateCheck({
+        value: idNumber ?? '',
+        fieldLabel: '身份证号',
+        target: 'legalRep',
+        form: legalRepForm,
+        returnToStepOnExitAppend: WIZARD_STEP.LEGAL_REP,
+      });
+      if (dup === 'blocked') return;
+      if (dup === 'appended') return;
       setCurrent(WIZARD_STEP.AGENT_INFO);
       return;
     }
@@ -102,26 +113,28 @@ export function ClientWizardPage() {
       return;
     }
     const isCompanyType = state.clientType === 'COMPANY';
-    // 客户唯一标识：公司类型取统一信用代码，个人类型取身份证号，落在 Client.uniqueIdentifier
-    // （companyInfo.creditCode/legalRepInfo.idNumber 仅作展示字段，不再承担唯一性语义）。
-    const uniqueIdentifier = isCompanyType
-      ? (state.companyInfo.creditCode ?? '')
-      : (state.legalRepInfo.idNumber ?? '');
+    // 客户唯一标识：公司=信用代码，个人=身份证号；与展示字段保持同值，并统一规范化。
+    const uniqueIdentifier = normalizeIdentifier(
+      isCompanyType ? state.companyInfo.creditCode : state.legalRepInfo.idNumber,
+    );
     const payload: ClientPayload = {
       clientType: state.clientType,
       phone: state.phone,
       email: state.email,
       remark: state.remark,
       uniqueIdentifier,
-      companyInfo: state.companyInfo as ClientPayload['companyInfo'],
+      companyInfo: {
+        ...(state.companyInfo as ClientPayload['companyInfo']),
+        ...(isCompanyType ? { creditCode: uniqueIdentifier } : {}),
+      },
       legalRepInfo: isCompanyType
         ? undefined
         : {
             nameCn: state.legalRepInfo.nameCn ?? '',
             namePinyin: state.legalRepInfo.namePinyin ?? '',
-            idNumber: state.legalRepInfo.idNumber ?? '',
             idAddressCn: state.legalRepInfo.idAddressCn ?? '',
             ...state.legalRepInfo,
+            idNumber: uniqueIdentifier,
           },
       agentInfos: state.agentInfos.map((a) => ({
         country: a.country,

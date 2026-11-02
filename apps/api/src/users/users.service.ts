@@ -31,6 +31,38 @@ export class UsersService {
     return this.toPublicUser(user);
   }
 
+  /**
+   * 客户列表「录入账户」筛选项下拉：仅返回正常账号。
+   * 支持关键词（昵称/手机号）模糊搜索 + 分页，避免用户量大时一次拉全量。
+   * 接口本身由 `@Roles(ADMIN, SUPERADMIN)` 限制，此处不再二次鉴权。
+   */
+  async listOptions(query: { page?: number; pageSize?: number; keyword?: string }) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const keyword = query.keyword?.trim() || undefined;
+    const where = {
+      status: 1,
+      ...(keyword
+        ? {
+            OR: [{ nickname: { contains: keyword } }, { phone: { contains: keyword } }],
+          }
+        : {}),
+    };
+
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        where,
+        select: { id: true, nickname: true, phone: true },
+        orderBy: [{ nickname: 'asc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    return { total, page, pageSize, items };
+  }
+
   async updateProfile(userId: string, dto: UpdateProfileDto, meta: RequestMeta) {
     if (dto.email) {
       const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });

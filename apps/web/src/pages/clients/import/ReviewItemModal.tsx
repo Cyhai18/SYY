@@ -4,12 +4,15 @@ import { DeleteOutlined } from '@ant-design/icons';
 import {
   AGENT_COUNTRY_LABELS,
   CLIENT_TYPE_LABELS,
+  normalizeIdentifier,
+  validateUniqueIdentifier,
   type AgentCountry,
   type ClientPayload,
   type ClientType,
 } from '@funtax/shared';
 import { nextKey, type AgentInfoDraft } from '../../../store/client-wizard-store';
 import { clientImportApi, type ImportItem } from '../../../lib/client-import-api';
+import { clientsApi } from '../../../lib/clients-api';
 import { AgentInfoEditor } from '../steps/AgentInfoEditor';
 
 /** 代理国家 -> 国旗 emoji，与 StepShops 保持一致，代理信息卡片标题用。 */
@@ -58,6 +61,8 @@ export function ReviewItemModal({
   const [legalRepInfo, setLegalRepInfo] = useState<Record<string, unknown>>({});
   const [agentInfos, setAgentInfos] = useState<AgentInfoDraft[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [identifierError, setIdentifierError] = useState<string | null>(null);
+  const [duplicateHint, setDuplicateHint] = useState<string | null>(null);
 
   useEffect(() => {
     if (!item || !open) return;
@@ -68,16 +73,51 @@ export function ReviewItemModal({
     setCompanyInfo((fields.companyInfo as Record<string, unknown>) ?? {});
     setLegalRepInfo((fields.legalRepInfo as Record<string, unknown>) ?? {});
     setAgentInfos(toAgentInfoDrafts(fields.agentInfos));
+    setIdentifierError(null);
+    setDuplicateHint(null);
   }, [item, open]);
 
   if (!item) return null;
 
+  /** 失焦：规范化 + 校验位 + 可选查重提示（导入 Review 无 APPEND，只提示勿重复提交）。 */
+  const handleIdentifierBlur = async (raw: string) => {
+    const normalized = normalizeIdentifier(raw);
+    if (clientType === 'COMPANY') {
+      setCompanyInfo((prev) => ({ ...prev, creditCode: normalized }));
+    } else {
+      setLegalRepInfo((prev) => ({ ...prev, idNumber: normalized }));
+    }
+    const err = validateUniqueIdentifier(clientType, normalized);
+    setIdentifierError(err);
+    setDuplicateHint(null);
+    if (err || !normalized) return;
+    try {
+      const { exists, owned } = await clientsApi.checkDuplicate(normalized);
+      if (!exists) return;
+      setDuplicateHint(
+        owned
+          ? '该客户已在您的名下存在，导入无法追加代理，请改用单条向导追加或勿重复创建'
+          : '该客户已存在且不属于您，无法通过导入创建',
+      );
+    } catch {
+      // 查重失败不阻断核对提交，静默忽略
+    }
+  };
+
   const handleSubmit = async () => {
-    // 客户唯一标识：公司取统一信用代码，个人取身份证号，落在 Client.uniqueIdentifier
-    const uniqueIdentifier =
+    const uniqueIdentifier = normalizeIdentifier(
       clientType === 'COMPANY'
-        ? ((companyInfo.creditCode as string | undefined) ?? '')
-        : ((legalRepInfo.idNumber as string | undefined) ?? '');
+        ? (companyInfo.creditCode as string | undefined)
+        : (legalRepInfo.idNumber as string | undefined),
+    );
+    const idErr = validateUniqueIdentifier(clientType, uniqueIdentifier);
+    if (idErr) {
+      setIdentifierError(idErr);
+      void message.error(idErr);
+      return;
+    }
+    setIdentifierError(null);
+
     const payload: ClientPayload = {
       clientType,
       phone,
@@ -86,10 +126,10 @@ export function ReviewItemModal({
       // 与后端 row-validator.service.ts 保持一致：公司信息/法人信息只在对应注册类型下才提交，
       // 否则另一侧即使是空对象 `{}`，也会被 class-validator 当作"存在但字段缺失"而报必填错误。
       companyInfo: (clientType === 'COMPANY'
-        ? companyInfo
+        ? { ...companyInfo, creditCode: uniqueIdentifier }
         : undefined) as unknown as ClientPayload['companyInfo'],
       legalRepInfo: (clientType === 'INDIVIDUAL'
-        ? legalRepInfo
+        ? { ...legalRepInfo, idNumber: uniqueIdentifier }
         : undefined) as unknown as ClientPayload['legalRepInfo'],
       agentInfos: agentInfos.map(({ key, shops, ...rest }) => ({
         ...rest,
@@ -178,12 +218,21 @@ export function ReviewItemModal({
             >
               <Row gutter={16}>
                 <Col span={8}>
-                  <Form.Item label="统一社会信用代码" required>
+                  <Form.Item
+                    label="统一社会信用代码"
+                    required
+                    validateStatus={identifierError ? 'error' : undefined}
+                    help={identifierError ?? duplicateHint ?? undefined}
+                  >
                     <Input
                       value={companyInfo.creditCode as string}
-                      onChange={(e) =>
-                        setCompanyInfo({ ...companyInfo, creditCode: e.target.value })
-                      }
+                      placeholder="18 位统一社会信用代码"
+                      onChange={(e) => {
+                        setIdentifierError(null);
+                        setDuplicateHint(null);
+                        setCompanyInfo({ ...companyInfo, creditCode: e.target.value });
+                      }}
+                      onBlur={(e) => void handleIdentifierBlur(e.target.value)}
                     />
                   </Form.Item>
                 </Col>
@@ -298,12 +347,21 @@ export function ReviewItemModal({
             >
               <Row gutter={16}>
                 <Col span={8}>
-                  <Form.Item label="身份证号" required>
+                  <Form.Item
+                    label="身份证号"
+                    required
+                    validateStatus={identifierError ? 'error' : undefined}
+                    help={identifierError ?? duplicateHint ?? undefined}
+                  >
                     <Input
                       value={legalRepInfo.idNumber as string}
-                      onChange={(e) =>
-                        setLegalRepInfo({ ...legalRepInfo, idNumber: e.target.value })
-                      }
+                      placeholder="18 位身份证号"
+                      onChange={(e) => {
+                        setIdentifierError(null);
+                        setDuplicateHint(null);
+                        setLegalRepInfo({ ...legalRepInfo, idNumber: e.target.value });
+                      }}
+                      onBlur={(e) => void handleIdentifierBlur(e.target.value)}
                     />
                   </Form.Item>
                 </Col>

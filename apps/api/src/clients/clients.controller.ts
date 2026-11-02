@@ -179,19 +179,21 @@ export class ClientsController {
   }
 
   /**
-   * 供证件 OCR 识别成功后触发的查重：统一信用代码/身份证号禁止手动编辑，只能由 OCR 识别得出，
-   * 命中已存在客户时返回其 companyInfo/legalRepInfo 供前端回填表单，并切换到"追加代理信息"模式。
+   * 向导 / 导入 Review 查重：参数名为历史兼容的 `creditCode`，实际传唯一标识
+   * （企业=统一社会信用代码，个人=身份证号）。CREATE 下手填或 OCR 后均可调用。
    * 必须声明在 `:id` 路由之前，否则会被 `:id` 吞掉。
    */
   @Get('duplicate-check')
   async duplicateCheck(
     @Query('creditCode') creditCode?: string,
+    @Query('uniqueIdentifier') uniqueIdentifier?: string,
     @CurrentUser() user?: AuthenticatedUser,
   ) {
-    if (!creditCode?.trim()) {
-      throw new BadRequestException('creditCode 不能为空');
+    const raw = uniqueIdentifier?.trim() || creditCode?.trim();
+    if (!raw) {
+      throw new BadRequestException('uniqueIdentifier 不能为空');
     }
-    return this.clientsService.checkDuplicate(creditCode.trim(), user!);
+    return this.clientsService.checkDuplicate(raw, user!);
   }
 
   @Get(':id')

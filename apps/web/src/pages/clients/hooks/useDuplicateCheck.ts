@@ -1,23 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { Modal, message } from 'antd';
 import type { FormInstance } from 'antd';
+import { normalizeIdentifier, validateUniqueIdentifier, type ClientType } from '@funtax/shared';
 import { clientsApi } from '../../../lib/clients-api';
 import { useClientWizardStore } from '../../../store/client-wizard-store';
-import { resolvePrevStep } from '../wizard-steps';
+import { resolvePrevStep, WIZARD_STEP } from '../wizard-steps';
 
-/**
- * `StepCompany`（统一信用代码）与 `StepLegalRep`（身份证号）共用的查重逻辑。
- * 统一信用代码/身份证号两个输入框禁止手动编辑，只能由证件 OCR 识别得出，因此查重只会在
- * OCR 识别成功后触发一次（各自 `handleUpload` 里调用），不再需要 onBlur + 防抖。
- * 命中已存在客户时弹窗提示，确认后切到"追加代理信息"模式，并把命中客户的 companyInfo/
- * legalRepInfo/联系方式（联系电话、邮箱）回填到当前表单；取消则退回上一步，方便用户重新核对/上传证件。
- *
- * @param fieldLabel 用于弹窗/提示文案的字段名，如"统一信用代码"/"身份证号"。
- * @param target 命中后应把哪一份信息回填到当前表单：'company' 对应 StepCompany，'legalRep' 对应 StepLegalRep。
- * @param form 当前 Step 持有的 antd Form 实例，命中后用于回填已存在客户的信息。
- */
-// 命中"归属他人"拦截后需要强制清空的字段名：按 target 区分，与 StepCompany/StepLegalRep
-// 的 Form.Item name 一一对应（不含 phone/email，联系方式是共享字段，不随证件识别清空）。
+export type DuplicateCheckOutcome = 'ok' | 'blocked' | 'appended';
+
 const EMPTY_FIELDS_BY_TARGET: Record<'company' | 'legalRep', Record<string, undefined>> = {
   company: {
     creditCode: undefined,
@@ -28,6 +18,7 @@ const EMPTY_FIELDS_BY_TARGET: Record<'company' | 'legalRep', Record<string, unde
     addressEn: undefined,
     provinceEn: undefined,
     cityEn: undefined,
+    contactPerson: undefined,
   },
   legalRep: {
     idNumber: undefined,
@@ -39,61 +30,82 @@ const EMPTY_FIELDS_BY_TARGET: Record<'company' | 'legalRep', Record<string, unde
   },
 };
 
-export function useDuplicateCheck(
-  fieldLabel: string,
-  target: 'company' | 'legalRep',
-  form: FormInstance,
-) {
-  const existingClientId = useClientWizardStore((s) => s.existingClientId);
-  const hydrateFromExisting = useClientWizardStore((s) => s.hydrateFromExisting);
-  const isLocked = useClientWizardStore((s) => s.mode === 'APPEND');
-  const current = useClientWizardStore((s) => s.current);
-  const clientType = useClientWizardStore((s) => s.clientType);
-  const setCurrent = useClientWizardStore((s) => s.setCurrent);
-  const clearRecognizedIdentity = useClientWizardStore((s) => s.clearRecognizedIdentity);
-  // 组件卸载后若查重请求才返回，避免继续弹窗/写入已卸载组件关心的状态
-  const mountedRef = useRef(true);
+/**
+ * 向导唯一标识查重：OCR / 失焦 / 下一步共用。
+ * - APPEND 且输入仍等于锁定唯一标识 → 不查，直接 ok（继续追加当前客户）
+ * - APPEND 但用户改了号 → 先 exitAppendMode，再按 CREATE 查重
+ * - 校验位不过 → 不发请求
+ */
+export async function runWizardDuplicateCheck(opts: {
+  value: string;
+  fieldLabel: string;
+  target: 'company' | 'legalRep';
+  form?: FormInstance;
+  isMounted?: () => boolean;
+  /** 退出 APPEND 后应回到的步骤（主体/个人信息） */
+  returnToStepOnExitAppend?: number;
+}): Promise<DuplicateCheckOutcome> {
+  let state = useClientWizardStore.getState();
+  const normalized = normalizeIdentifier(opts.value);
+  if (!normalized) return 'ok';
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // 仍挂在同一客户的锁定标识上：无需重复查重
+  if (
+    state.mode === 'APPEND' &&
+    state.lockedUniqueIdentifier &&
+    normalized === state.lockedUniqueIdentifier
+  ) {
+    return 'ok';
+  }
 
-  const runDuplicateCheck = async (value: string) => {
-    if (!value.trim() || isLocked) return;
-    try {
-      const { exists, owned, client } = await clientsApi.checkDuplicate(value.trim());
-      if (!mountedRef.current || !exists) return;
-      if (!owned) {
-        // 命中的客户归属于其他用户：不暴露其任何信息，仅提示无权限，并清空当前表单强制
-        // 重新上传证件，禁止带着这份识别结果继续填写/提交。
+  const typeForCheck: ClientType = opts.target === 'company' ? 'COMPANY' : 'INDIVIDUAL';
+  // 校验位不过：不发请求，也不 exitAppend——避免误按一个字符就清掉 existingAgentInfos
+  if (validateUniqueIdentifier(typeForCheck, normalized)) return 'ok';
+
+  // 用户在追加模式下改成了另一个合法号 → 退出追加，再按新建查重
+  if (state.mode === 'APPEND') {
+    state.exitAppendMode({ returnToStep: opts.returnToStepOnExitAppend });
+    void message.info(`已退出追加模式，将按新的${opts.fieldLabel}继续`);
+    state = useClientWizardStore.getState();
+  }
+
+  try {
+    const { exists, owned, client } = await clientsApi.checkDuplicate(normalized);
+    if (opts.isMounted && !opts.isMounted()) return 'ok';
+    if (!exists) return 'ok';
+    if (!owned) {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          state.clearRecognizedIdentity(opts.target);
+          opts.form?.setFieldsValue(EMPTY_FIELDS_BY_TARGET[opts.target]);
+          resolve();
+        };
         Modal.error({
-          title: '该客户您无权限新增或修改，请重新上传',
-          onOk: () => {
-            // 清空本次 OCR 识别回填的信息及已上传证件，停留在当前步骤强制重新上传，
-            // 避免带着被拦截的统一信用代码/身份证号直接跳到下一步、到最终提交才报错。
-            // 注意：这里不能用 form.resetFields()——它重置到的是 Form 当前已配置的
-            // initialValues，而 initialValues 取自上一次渲染时的 store 快照；
-            // clearRecognizedIdentity() 虽同步更新了 store，但 React 重渲染是异步的，
-            // resetFields() 执行时组件还未用清空后的 store 重新渲染，initialValues 仍是
-            // 识别出的旧值，resetFields() 等于把字段重置回这份旧值，视觉上没有任何变化。
-            // 必须显式用 setFieldsValue 把目标字段逐一置空。
-            clearRecognizedIdentity(target);
-            form.setFieldsValue(EMPTY_FIELDS_BY_TARGET[target]);
-          },
+          title: '该客户您无权限新增或修改，请更换号码或重新上传证件',
+          onOk: finish,
+          afterClose: finish,
         });
-        return;
-      }
-      if (!client || client.id === existingClientId) return;
+      });
+      return 'blocked';
+    }
+    if (!client || client.id === state.existingClientId) return 'ok';
+    return await new Promise<DuplicateCheckOutcome>((resolve) => {
+      let settled = false;
+      const finish = (outcome: DuplicateCheckOutcome) => {
+        if (settled) return;
+        settled = true;
+        resolve(outcome);
+      };
       Modal.confirm({
         title: '该客户已存在',
-        content: `识别到的${fieldLabel}已在系统中存在，是否为该客户追加新的代理信息？`,
+        content: `该${opts.fieldLabel}已在系统中存在，是否为该客户追加新的代理信息？也可取消后修改${opts.fieldLabel}继续新建。`,
         okText: '追加代理信息',
         cancelText: '返回上一步',
         onOk: () => {
-          hydrateFromExisting({
+          state.hydrateFromExisting({
             id: client.id,
             phone: client.phone,
             email: client.email,
@@ -101,17 +113,56 @@ export function useDuplicateCheck(
             companyInfo: client.companyInfo,
             legalRepInfo: client.legalRepInfo,
             agentInfos: client.agentInfos,
+            lockedUniqueIdentifier: normalized,
           });
-          const fields = target === 'company' ? client.companyInfo : client.legalRepInfo;
-          form.setFieldsValue({ ...fields, phone: client.phone, email: client.email });
-          void message.info(`已切换为追加代理信息模式，${fieldLabel}不可再变更`);
+          const fields = opts.target === 'company' ? client.companyInfo : client.legalRepInfo;
+          opts.form?.setFieldsValue({ ...fields, phone: client.phone, email: client.email });
+          void message.info(
+            `已切换为追加代理信息模式。若需改为新建客户，可修改${opts.fieldLabel}后继续`,
+          );
+          finish('appended');
         },
-        onCancel: () => setCurrent(resolvePrevStep(current, clientType)),
+        afterClose: () => {
+          if (settled) return;
+          state.setCurrent(resolvePrevStep(state.current, state.clientType));
+          finish('blocked');
+        },
       });
-    } catch {
-      // 查重接口失败不阻断正常填写流程，静默忽略即可
-    }
-  };
+    });
+  } catch {
+    return 'ok';
+  }
+}
 
-  return { runDuplicateCheck, isLocked };
+/** Step 内失焦/OCR 查重，带卸载守卫与请求序号。APPEND 下唯一标识仍可编辑。 */
+export function useDuplicateCheck(
+  fieldLabel: string,
+  target: 'company' | 'legalRep',
+  form: FormInstance,
+) {
+  const isAppend = useClientWizardStore((s) => s.mode === 'APPEND');
+  const mountedRef = useRef(true);
+  const reqIdRef = useRef(0);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const runDuplicateCheck = async (value: string): Promise<DuplicateCheckOutcome> => {
+    const reqId = ++reqIdRef.current;
+    const returnToStep = target === 'company' ? WIZARD_STEP.COMPANY : WIZARD_STEP.LEGAL_REP;
+    const outcome = await runWizardDuplicateCheck({
+      value,
+      fieldLabel,
+      target,
+      form,
+      returnToStepOnExitAppend: returnToStep,
+      isMounted: () => mountedRef.current && reqId === reqIdRef.current,
+    });
+    if (!mountedRef.current || reqId !== reqIdRef.current) return 'ok';
+    return outcome;
+  };
+  // isAppend 仅供步骤文案/提示条使用，不再禁用唯一标识输入
+  return { runDuplicateCheck, isAppend };
 }

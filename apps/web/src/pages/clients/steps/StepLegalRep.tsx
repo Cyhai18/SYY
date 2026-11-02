@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, Card, Col, Form, Input, Row, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { IdcardOutlined } from '@ant-design/icons';
+import { idNumberFormRule, normalizeIdentifier } from '@funtax/shared';
 import { useClientWizardStore } from '../../../store/client-wizard-store';
 import { ocrApi } from '../../../lib/ocr-api';
 import { useDuplicateCheck } from '../hooks/useDuplicateCheck';
@@ -40,7 +41,7 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
   const showLockedHint = useClientWizardStore((s) => s.lockedHintVisible);
   const dismissLockedHint = useClientWizardStore((s) => s.dismissLockedHint);
   const [recognizing, setRecognizing] = useState<'front' | 'back' | null>(null);
-  const { runDuplicateCheck } = useDuplicateCheck('身份证号', 'legalRep', form);
+  const { runDuplicateCheck, isAppend } = useDuplicateCheck('身份证号', 'legalRep', form);
 
   const handleUpload = async (file: File, side: 'front' | 'back') => {
     setIdCardFile(side, file);
@@ -105,7 +106,7 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
           showIcon
           closable
           onClose={dismissLockedHint}
-          message="该客户已存在，正在为其追加代理信息。身份证号不可变更，其余信息及本次上传的身份证图片将以最新识别/填写内容为准并覆盖更新。"
+          message="该客户已存在，正在为其追加代理信息。如需改为新建其他客户，可修改身份证号后自动退出追加。其余信息及本次上传的身份证图片将以最新识别/填写内容为准并覆盖更新。"
           style={{ marginBottom: 16 }}
         />
       ) : null}
@@ -117,7 +118,7 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
             accept=".jpg,.jpeg,.png"
             uploading={recognizing === 'front'}
             uploadingText="识别中…"
-            placeholderText="上传身份证人像面"
+            placeholderText="上传身份证人像面（选填，可自动识别）"
             icon={<IdcardOutlined />}
             onUpload={(file) => void handleUpload(file, 'front')}
             onRemove={() => clearIdCardFile('front')}
@@ -129,7 +130,7 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
             accept=".jpg,.jpeg,.png"
             uploading={recognizing === 'back'}
             uploadingText="识别中…"
-            placeholderText="上传身份证国徽面"
+            placeholderText="上传身份证国徽面（选填）"
             icon={<IdcardOutlined />}
             onUpload={(file) => void handleUpload(file, 'back')}
             onRemove={() => clearIdCardFile('back')}
@@ -154,10 +155,26 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
               <Form.Item
                 label="身份证号"
                 name="idNumber"
-                rules={[{ required: true, message: '请上传身份证以自动识别身份证号' }]}
-                tooltip="身份证号由身份证 OCR 识别得出，不支持手动修改"
+                // required 管星标与空值提示；idNumberFormRule 只管有值时的校验位
+                rules={[{ required: true, message: '请填写身份证号' }, idNumberFormRule()]}
+                tooltip={
+                  isAppend
+                    ? '追加模式下可修改身份证号以改为新建其他客户；改号后将退出追加并重新查重'
+                    : '可上传身份证自动识别，也可手动填写；须通过校验位'
+                }
               >
-                <Input disabled />
+                <Input
+                  placeholder="18 位身份证号"
+                  onBlur={(e) => {
+                    const value = normalizeIdentifier(e.target.value);
+                    if (!value) return;
+                    if (value !== e.target.value) {
+                      form.setFieldsValue({ idNumber: value });
+                      setLegalRepInfo({ idNumber: value });
+                    }
+                    void runDuplicateCheck(value);
+                  }}
+                />
               </Form.Item>
             </Col>
             <Col span={8}>

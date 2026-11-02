@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, Card, Col, Form, Input, Row, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
+import { creditCodeFormRule, normalizeIdentifier } from '@funtax/shared';
 import { useClientWizardStore } from '../../../store/client-wizard-store';
 import { ocrApi } from '../../../lib/ocr-api';
 import { useDuplicateCheck } from '../hooks/useDuplicateCheck';
@@ -42,7 +43,7 @@ export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> })
   const email = useClientWizardStore((s) => s.email);
   const setContact = useClientWizardStore((s) => s.setContact);
   const [recognizing, setRecognizing] = useState(false);
-  const { runDuplicateCheck } = useDuplicateCheck('统一社会信用代码', 'company', form);
+  const { runDuplicateCheck, isAppend } = useDuplicateCheck('统一社会信用代码', 'company', form);
 
   const handleUpload = async (file: File) => {
     setBusinessLicenseFile(file);
@@ -101,7 +102,7 @@ export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> })
           showIcon
           closable
           onClose={dismissLockedHint}
-          message="该客户已存在，正在为其追加代理信息。统一信用代码不可变更，其余信息及本次上传的营业执照将以最新识别/填写内容为准并覆盖更新。"
+          message="该客户已存在，正在为其追加代理信息。如需改为新建其他客户，可修改统一社会信用代码后自动退出追加。其余信息及本次上传的营业执照将以最新识别/填写内容为准并覆盖更新。"
           style={{ marginBottom: 16 }}
         />
       ) : null}
@@ -112,7 +113,7 @@ export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> })
           accept=".jpg,.jpeg,.png,.pdf"
           uploading={recognizing}
           uploadingText="识别中，请稍候…"
-          placeholderText="点击或拖拽上传营业执照"
+          placeholderText="点击或拖拽上传营业执照（选填，可自动识别）"
           icon={<InboxOutlined />}
           onUpload={(file) => void handleUpload(file)}
           onRemove={clearBusinessLicenseFile}
@@ -136,10 +137,30 @@ export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> })
               <Form.Item
                 label="统一社会信用代码"
                 name="creditCode"
-                rules={[{ required: true, message: '请上传营业执照以自动识别统一社会信用代码' }]}
-                tooltip="统一社会信用代码由营业执照 OCR 识别得出，不支持手动修改"
+                // required 管星标与空值提示；creditCodeFormRule 只管有值时的校验位
+                rules={[
+                  { required: true, message: '请填写统一社会信用代码' },
+                  creditCodeFormRule(),
+                ]}
+                tooltip={
+                  isAppend
+                    ? '追加模式下可修改统一社会信用代码以改为新建其他客户；改号后将退出追加并重新查重'
+                    : '可上传营业执照自动识别，也可手动填写；须通过校验位'
+                }
               >
-                <Input disabled />
+                <Input
+                  placeholder="18 位统一社会信用代码"
+                  onBlur={(e) => {
+                    const value = normalizeIdentifier(e.target.value);
+                    if (!value) return;
+                    // 失焦时写回规范化结果，再触发查重（APPEND 下改号会 exitAppendMode）
+                    if (value !== e.target.value) {
+                      form.setFieldsValue({ creditCode: value });
+                      setCompanyInfo({ creditCode: value });
+                    }
+                    void runDuplicateCheck(value);
+                  }}
+                />
               </Form.Item>
             </Col>
             <Col span={8}>

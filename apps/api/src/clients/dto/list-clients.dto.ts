@@ -1,5 +1,15 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 import { AgentCountry, ClientType } from '@prisma/client';
 
 export class ListClientsDto {
@@ -27,4 +37,10 @@ export class ListClientsDto {
   @IsOptional() @IsDateString() submittedFrom?: string;
 
   @IsOptional() @IsDateString() submittedTo?: string;
+
+  /**
+   * 按录入账户（负责人 owner）筛选。仅 ADMIN/SUPERADMIN 生效；
+   * 普通用户列表本身已按本人 ownerId 隔离，该参数会被忽略。
+   */
+  @IsOptional() @IsUUID() ownerId?: string;
 }

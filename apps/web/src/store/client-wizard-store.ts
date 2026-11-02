@@ -26,7 +26,11 @@ export interface AgentInfoDraft extends AgentInfoPayload {
   shops: ShopDraft[];
 }
 
-/** 向导模式：CREATE 从零建档；APPEND 命中已存在客户后，仅追加代理信息，主体标识字段锁定。 */
+/**
+ * 向导模式：CREATE 从零建档；APPEND 命中已存在客户后追加代理信息。
+ * APPEND 下唯一标识仍可编辑：若用户改成与锁定值不同的号码，则退出 APPEND 按新建重新查重
+ * （避免误点追加后无法改为「新建另一客户」）。
+ */
 export type WizardMode = 'CREATE' | 'APPEND';
 
 interface ClientWizardState {
@@ -34,6 +38,11 @@ interface ClientWizardState {
   mode: WizardMode;
   /** APPEND 模式下命中的已存在客户 id；CREATE 模式为 null。 */
   existingClientId: string | null;
+  /**
+   * 进入 APPEND 时固化的唯一标识（已规范化）。
+   * 用于判断用户是否改号：与当前输入不一致则 exitAppendMode。
+   */
+  lockedUniqueIdentifier: string | null;
   clientType: ClientType | null;
   phone: string;
   email?: string;
@@ -76,9 +85,9 @@ interface ClientWizardState {
   clearBusinessLicenseFile: () => void;
   clearIdCardFile: (side: 'front' | 'back') => void;
   /**
-   * 命中已存在客户时调用：切换到 APPEND 模式，记录已存在客户的 id，并把其 companyInfo/
-   * legalRepInfo/联系方式回填到当前表单——统一信用代码/身份证号已禁止手动编辑，命中说明其余信息
-   * 大概率也不用重填，减少用户重复录入；后续如证件重新上传识别到更新内容，会再次覆盖回填值。
+   * 命中已存在客户时调用：切换到 APPEND 模式，记录已存在客户的 id 与锁定唯一标识，
+   * 并把其 companyInfo/legalRepInfo/联系方式回填到当前表单。
+   * 唯一标识仍可编辑；若用户改成其它号码，调用 exitAppendMode 回到 CREATE 重新查重。
    */
   hydrateFromExisting: (client: {
     id: string;
@@ -88,7 +97,14 @@ interface ClientWizardState {
     companyInfo?: CompanyInfoPayload;
     legalRepInfo?: LegalRepresentativePayload;
     agentInfos?: DuplicateCheckAgentInfo[];
+    /** 已规范化的唯一标识（信用代码或身份证号） */
+    lockedUniqueIdentifier: string;
   }) => void;
+  /**
+   * 用户改动唯一标识后退出追加：清掉 existingClientId / existingAgentInfos / 锁定标识，
+   * 回到主体信息步骤继续当新建客户填写；保留当前表单其它已填内容。
+   */
+  exitAppendMode: (opts?: { returnToStep?: number }) => void;
   reset: () => void;
 }
 
@@ -96,6 +112,7 @@ const initialState = {
   current: 0,
   mode: 'CREATE' as WizardMode,
   existingClientId: null as string | null,
+  lockedUniqueIdentifier: null as string | null,
   clientType: null as ClientType | null,
   phone: '',
   email: undefined as string | undefined,
@@ -171,6 +188,7 @@ export const useClientWizardStore = create<ClientWizardState>((set) => ({
     set((s) => ({
       mode: 'APPEND',
       existingClientId: client.id,
+      lockedUniqueIdentifier: client.lockedUniqueIdentifier,
       phone: client.phone ?? s.phone,
       email: client.email ?? s.email,
       remark: client.remark ?? s.remark,
@@ -181,6 +199,18 @@ export const useClientWizardStore = create<ClientWizardState>((set) => ({
       // 对应 ClientWizardPage 的 WIZARD_STEP.AGENT_INFO：主体/法人信息已回填，直接跳到代理信息步骤
       current: 3,
     }));
+  },
+  exitAppendMode: (opts) => {
+    if (lockedHintTimer) clearTimeout(lockedHintTimer);
+    // 保留表单已填内容与 agentInfos 草稿；仅清追加态。改号后若指定 returnToStep 则回到主体/个人信息步。
+    set({
+      mode: 'CREATE',
+      existingClientId: null,
+      lockedUniqueIdentifier: null,
+      existingAgentInfos: [],
+      lockedHintVisible: false,
+      ...(opts?.returnToStep !== undefined ? { current: opts.returnToStep } : {}),
+    });
   },
   reset: () => {
     if (ocrFailedHintTimer) clearTimeout(ocrFailedHintTimer);

@@ -6,6 +6,7 @@ import { ClientsService } from '../clients.service';
 import { OcrService } from '../../ocr/ocr.service';
 import { ClientPayloadDto } from '../dto/client-payload.dto';
 import type { ParsedExcelResult } from './excel-parser.service';
+import { normalizeIdentifier, validateUniqueIdentifier } from '../identifier.util';
 
 export interface ReviewIssue {
   field: string;
@@ -156,16 +157,23 @@ export class RowValidatorService {
     };
 
     const resolvedClientType = reverseLabel(CLIENT_TYPE_LABELS, parsed.clientType);
-    // Client.uniqueIdentifier：公司类型取信用代码，个人类型取身份证号，与页面向导提交逻辑保持一致
-    const uniqueIdentifier =
+    // Client.uniqueIdentifier：公司类型取信用代码，个人类型取身份证号；规范化后与 createClient 口径一致
+    const rawUnique =
       resolvedClientType === 'INDIVIDUAL' ? legalRepInfo.idNumber : companyInfo.creditCode;
+    const uniqueIdentifier = normalizeIdentifier(rawUnique);
+    if (resolvedClientType === 'COMPANY' && uniqueIdentifier) {
+      companyInfo.creditCode = uniqueIdentifier;
+    }
+    if (resolvedClientType === 'INDIVIDUAL' && uniqueIdentifier) {
+      legalRepInfo.idNumber = uniqueIdentifier;
+    }
 
     const candidate = {
       clientType: resolvedClientType,
       phone: parsed.phone,
       email: parsed.email,
       remark: parsed.remark,
-      uniqueIdentifier,
+      uniqueIdentifier: uniqueIdentifier || undefined,
       // 公司信息/法人信息只在对应注册类型下才校验：与页面新增客户向导一致，企业类型不采集法人信息，
       // 个人类型不采集公司信息。此前无条件都塞进 candidate，导致 legalRepInfo 的必填字段
       // （nameCn/namePinyin/idNumber/idAddressCn）在企业类型下也被 class-validator 强制校验。
@@ -262,6 +270,18 @@ export class RowValidatorService {
         seenCountries.add(agent.country);
       }
     });
+
+    // 唯一标识校验位：与 createClient / 向导手填同一套算法，提前写入 issues 便于 Review 展示
+    if (candidate.clientType === 'COMPANY' || candidate.clientType === 'INDIVIDUAL') {
+      const idErr = validateUniqueIdentifier(candidate.clientType, candidate.uniqueIdentifier);
+      if (idErr) {
+        issues.push({
+          field:
+            candidate.clientType === 'COMPANY' ? 'companyInfo.creditCode' : 'legalRepInfo.idNumber',
+          message: idErr,
+        });
+      }
+    }
 
     const dto = plainToInstance(ClientPayloadDto, candidate);
     const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: false });

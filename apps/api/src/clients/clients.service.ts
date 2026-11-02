@@ -30,6 +30,7 @@ import type {
 } from './dto/client-payload.dto';
 import type { UpdateAgentInfoDto, UpdateClientDto } from './dto/update-client.dto';
 import type { ListClientsDto } from './dto/list-clients.dto';
+import { normalizeIdentifier, validateUniqueIdentifier } from './identifier.util';
 
 /**
  * 证书服务有效期状态推导：与 packages/shared 的 `deriveCertificateServiceStatus` 保持同一口径
@@ -168,8 +169,10 @@ export class ClientsService {
    * 面向前端 onBlur 触发的查重请使用 `checkDuplicate`，其只返回展示所需的最小字段以避免信息泄露。
    */
   async findDuplicate(uniqueIdentifier: string) {
+    const normalized = normalizeIdentifier(uniqueIdentifier);
+    if (!normalized) return null;
     return this.prisma.client.findFirst({
-      where: { deletedAt: null, uniqueIdentifier },
+      where: { deletedAt: null, uniqueIdentifier: normalized },
       include: {
         companyInfo: true,
         legalRepInfo: true,
@@ -179,8 +182,8 @@ export class ClientsService {
   }
 
   /**
-   * 供向导查重使用：统一信用代码/身份证号两个输入框已禁止手动编辑，只能由证件 OCR 识别得出，
-   * 因此该接口只会在 OCR 识别成功后触发一次，不再有 onBlur 高频触发的顾虑。
+   * 供向导 / 导入 Review 查重：CREATE 下手填或 OCR 后均可触发（前端失焦/防抖）。
+   * 入参先规范化再查，与 createClient 落库口径一致。
    *
    * 命中客户归属当前操作人（`ownerId === actor.id`）时，才返回完整的 `companyInfo`/`legalRepInfo`/
    * 联系方式/已有代理信息，供前端回填对应表单 tab、并禁用已存在的代理国家选项；
@@ -189,8 +192,12 @@ export class ClientsService {
    * 未命中返回 `{ exists: false, owned: false, client: null }`。
    */
   async checkDuplicate(uniqueIdentifier: string, actor: AuthenticatedUser) {
+    const normalized = normalizeIdentifier(uniqueIdentifier);
+    if (!normalized) {
+      return { exists: false, owned: false, client: null };
+    }
     const client = await this.prisma.client.findFirst({
-      where: { deletedAt: null, uniqueIdentifier },
+      where: { deletedAt: null, uniqueIdentifier: normalized },
       select: {
         id: true,
         ownerId: true,
@@ -252,8 +259,17 @@ export class ClientsService {
       },
     });
     if (!client) return { exists: false, owned: false, client: null };
-    if (client.ownerId !== actor.id) {
-      // 命中客户归属其他用户：不暴露任何客户信息，仅告知"存在但不属于我"，前端据此阻断新增/修改。
+    // 可操作口径与 assertAccess 对齐：本人 owner、ADMIN/SUPERADMIN、或已是 tracker 均可进入追加流程。
+    // 仅 owner 判断会把「已是跟踪人」误判为无权限。
+    let canOperate = actor.role !== Role.USER || client.ownerId === actor.id;
+    if (!canOperate) {
+      const tracker = await this.prisma.clientTracker.findUnique({
+        where: { clientId_userId: { clientId: client.id, userId: actor.id } },
+      });
+      canOperate = Boolean(tracker);
+    }
+    if (!canOperate) {
+      // 命中客户但对当前操作人不可访问：不暴露任何客户信息。
       return { exists: true, owned: false, client: null };
     }
     return {
@@ -280,6 +296,63 @@ export class ClientsService {
   }
 
   /**
+   * 规范化 + 校验位 + 唯一标识与子表字段一致性。
+   * 向导手填、导入 OCR、Review 手改最终都经 `createClient` 落库，在此统一收口。
+   */
+  private normalizeAndAssertIdentifiers(payload: ClientPayloadDto): ClientPayloadDto {
+    const uniqueIdentifier = normalizeIdentifier(payload.uniqueIdentifier);
+    const idErr = validateUniqueIdentifier(payload.clientType, uniqueIdentifier);
+    if (idErr) {
+      throw new BadRequestException(idErr);
+    }
+
+    if (payload.clientType === 'COMPANY') {
+      const creditCode = normalizeIdentifier(payload.companyInfo.creditCode ?? uniqueIdentifier);
+      if (creditCode !== uniqueIdentifier) {
+        throw new BadRequestException('统一社会信用代码与客户唯一标识不一致');
+      }
+      return {
+        ...payload,
+        uniqueIdentifier,
+        companyInfo: { ...payload.companyInfo, creditCode },
+      };
+    }
+
+    if (!payload.legalRepInfo) {
+      throw new BadRequestException('法人信息不能为空');
+    }
+    const idNumber = normalizeIdentifier(payload.legalRepInfo.idNumber ?? uniqueIdentifier);
+    if (idNumber !== uniqueIdentifier) {
+      throw new BadRequestException('身份证号与客户唯一标识不一致');
+    }
+    return {
+      ...payload,
+      uniqueIdentifier,
+      legalRepInfo: { ...payload.legalRepInfo, idNumber },
+    };
+  }
+
+  /**
+   * 追加/编辑时剥离不可变的唯一标识展示字段，避免子表 creditCode/idNumber 与
+   * Client.uniqueIdentifier 被改成不一致。
+   */
+  private stripImmutableIdentifiers<T extends { creditCode?: string }>(
+    companyInfo?: T,
+  ): Omit<T, 'creditCode'> | undefined {
+    if (!companyInfo) return undefined;
+    const { creditCode: _ignored, ...rest } = companyInfo;
+    return rest;
+  }
+
+  private stripImmutableIdNumber<T extends { idNumber?: string }>(
+    legalRepInfo?: T,
+  ): Omit<T, 'idNumber'> | undefined {
+    if (!legalRepInfo) return undefined;
+    const { idNumber: _ignored, ...rest } = legalRepInfo;
+    return rest;
+  }
+
+  /**
    * @param actor 创建者；ownerId 缺省时默认归属创建者本人
    * @param attachments 营业执照/身份证图片，事务提交后落盘，落盘失败只记 warning，不回滚客户创建
    */
@@ -291,36 +364,41 @@ export class ClientsService {
     attachments?: ClientAttachmentInput[],
     status?: ClientStatus,
   ) {
-    const duplicate = await this.findDuplicate(payload.uniqueIdentifier);
+    const normalized = this.normalizeAndAssertIdentifiers(payload);
+    const duplicate = await this.findDuplicate(normalized.uniqueIdentifier);
     if (duplicate) {
       throw new ConflictException(
         `该客户已存在（${duplicate.companyInfo?.nameCn ?? duplicate.companyInfo?.nameEn ?? duplicate.phone}），请勿重复创建`,
       );
     }
     // 公司类型客户不再采集法人信息，改为在"主体信息"中必填联系人；个人类型客户仍需完整的法人信息
-    if (payload.clientType === 'COMPANY' && !payload.companyInfo.contactPerson) {
+    if (normalized.clientType === 'COMPANY' && !normalized.companyInfo.contactPerson) {
       throw new BadRequestException('联系人不能为空');
     }
-    if (payload.clientType === 'INDIVIDUAL' && !payload.legalRepInfo) {
+    if (normalized.clientType === 'INDIVIDUAL' && !normalized.legalRepInfo) {
       throw new BadRequestException('法人信息不能为空');
     }
-    this.assertRequiredFields(payload.clientType, payload.companyInfo, payload.legalRepInfo);
+    this.assertRequiredFields(
+      normalized.clientType,
+      normalized.companyInfo,
+      normalized.legalRepInfo,
+    );
     const client = await this.prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
         data: {
-          clientType: payload.clientType,
-          phone: payload.phone,
-          email: payload.email,
-          remark: payload.remark,
-          uniqueIdentifier: payload.uniqueIdentifier,
+          clientType: normalized.clientType,
+          phone: normalized.phone,
+          email: normalized.email,
+          remark: normalized.remark,
+          uniqueIdentifier: normalized.uniqueIdentifier,
           status,
           ownerId: ownerId ?? actor.id,
           createdById: actor.id,
           updatedById: actor.id,
-          companyInfo: { create: payload.companyInfo },
-          legalRepInfo: payload.legalRepInfo ? { create: payload.legalRepInfo } : undefined,
+          companyInfo: { create: normalized.companyInfo },
+          legalRepInfo: normalized.legalRepInfo ? { create: normalized.legalRepInfo } : undefined,
           agentInfos: {
-            create: payload.agentInfos.map((agent) => ({
+            create: normalized.agentInfos.map((agent) => ({
               ...buildAgentInfoScalars(agent),
               // 建档时尚未拿到 client.id，Shop/Product 的 clientId 冗余字段先占位，事务内下方 updateMany 回填
               shops: buildShopsCreateInput(agent.shops, ''),
@@ -347,7 +425,7 @@ export class ClientsService {
     await this.actionLogService.record({
       userId: actor.id,
       action: 'CREATE_CLIENT',
-      detail: JSON.stringify({ clientId: client.id, phone: payload.phone }),
+      detail: JSON.stringify({ clientId: client.id, phone: normalized.phone }),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
@@ -413,6 +491,7 @@ export class ClientsService {
       | 'submittedFrom'
       | 'submittedTo'
       | 'keyword'
+      | 'ownerId'
     >,
     actor: AuthenticatedUser,
   ): { where: Prisma.ClientWhereInput; agentInfosWhere: Prisma.AgentInfoWhereInput | undefined } {
@@ -455,9 +534,12 @@ export class ClientsService {
             ...(query.agentCountry ? { country: query.agentCountry } : {}),
           }
         : undefined;
+    // 普通用户强制只看自己负责的客户；ADMIN/SUPERADMIN 可看全部，并可用 ownerId 按录入账户筛选。
+    const ownerIdFilter =
+      actor.role === Role.USER ? actor.id : query.ownerId ? query.ownerId : undefined;
     const where: Prisma.ClientWhereInput = {
       deletedAt: null,
-      ...(actor.role === Role.USER ? { ownerId: actor.id } : {}),
+      ...(ownerIdFilter ? { ownerId: ownerIdFilter } : {}),
       ...(query.clientType ? { clientType: query.clientType } : {}),
       // certificateStatus 和 agentCountry 都基于 agentInfos 做 some 过滤，需合并到同一个 agentInfos
       // 条件里（分开写成两个 `agentInfos` key 会被后一个覆盖，而不是同时生效）。
@@ -561,6 +643,7 @@ export class ClientsService {
       | 'submittedFrom'
       | 'submittedTo'
       | 'keyword'
+      | 'ownerId'
     >,
     actor: AuthenticatedUser,
   ): Promise<Buffer> {
@@ -637,6 +720,7 @@ export class ClientsService {
       | 'submittedFrom'
       | 'submittedTo'
       | 'keyword'
+      | 'ownerId'
     >,
     actor: AuthenticatedUser,
   ): Promise<{ buffer: Buffer; truncated: boolean }> {
@@ -748,16 +832,18 @@ export class ClientsService {
 
   async update(id: string, dto: UpdateClientDto, actor: AuthenticatedUser, meta: RequestMeta) {
     const existing = await this.findOne(id, actor);
-    // Client.uniqueIdentifier 是客户唯一标识，一旦客户存在即不可通过编辑接口变更；
-    // companyInfo.creditCode/legalRepInfo.idNumber 已降级为仅展示字段，可随其余信息一并更新。
+    // Client.uniqueIdentifier 与展示用 creditCode/idNumber 一律不可通过编辑接口变更，
+    // 与详情页禁用态对齐；即使请求体带了这两个字段也会被剥离。
+    const companyInfoUpdate = this.stripImmutableIdentifiers(dto.companyInfo);
+    const legalRepInfoUpdate = this.stripImmutableIdNumber(dto.legalRepInfo);
     await this.prisma.client.update({
       where: { id },
       data: {
         email: dto.email,
         remark: dto.remark,
         updatedById: actor.id,
-        companyInfo: dto.companyInfo ? { update: dto.companyInfo } : undefined,
-        legalRepInfo: dto.legalRepInfo ? { update: dto.legalRepInfo } : undefined,
+        companyInfo: companyInfoUpdate ? { update: companyInfoUpdate } : undefined,
+        legalRepInfo: legalRepInfoUpdate ? { update: legalRepInfoUpdate } : undefined,
       },
     });
     await this.actionLogService.record({
@@ -854,6 +940,8 @@ export class ClientsService {
     if (!existing) {
       throw new NotFoundException('客户不存在');
     }
+    // 与 findOne/update 一致：非负责人/非跟踪人/非管理员不可追加
+    await this.assertAccess(existing.id, existing.ownerId, actor);
 
     if (existing.clientType === 'COMPANY' && !payload.companyInfo.contactPerson) {
       throw new BadRequestException('联系人不能为空');
@@ -877,6 +965,10 @@ export class ClientsService {
       seenCombos.add(combo);
     }
 
+    // 追加场景唯一标识锁定：剥离 creditCode/idNumber，其余主体/法人字段可覆盖更新
+    const companyInfoUpdate = this.stripImmutableIdentifiers(payload.companyInfo);
+    const legalRepInfoUpdate = this.stripImmutableIdNumber(payload.legalRepInfo);
+
     const { client, newAgentInfoIds } = await this.prisma.$transaction(async (tx) => {
       await tx.client.update({
         where: { id: clientId },
@@ -884,8 +976,8 @@ export class ClientsService {
           email: payload.email,
           remark: payload.remark,
           updatedById: actor.id,
-          companyInfo: payload.companyInfo ? { update: payload.companyInfo } : undefined,
-          legalRepInfo: payload.legalRepInfo ? { update: payload.legalRepInfo } : undefined,
+          companyInfo: companyInfoUpdate ? { update: companyInfoUpdate } : undefined,
+          legalRepInfo: legalRepInfoUpdate ? { update: legalRepInfoUpdate } : undefined,
           // 追加代理信息的操作人自动成为该客户的跟踪人之一，已在名单内则原样跳过
           trackers: {
             upsert: {

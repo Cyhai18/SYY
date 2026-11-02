@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Button, Card, Empty, Popover } from 'antd';
+import { Alert, Button, Card, Empty, Popover } from 'antd';
 import { CheckCircleFilled, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import {
   AGENT_COUNTRY_COMPANIES,
@@ -81,6 +81,9 @@ export const StepShops = forwardRef<StepShopsHandle>(function StepShops(_props, 
   const agentInfos = useClientWizardStore((s) => s.agentInfos);
   const setAgentInfos = useClientWizardStore((s) => s.setAgentInfos);
   const existingAgentInfos = useClientWizardStore((s) => s.existingAgentInfos);
+  const isAppend = useClientWizardStore((s) => s.mode === 'APPEND');
+  const showLockedHint = useClientWizardStore((s) => s.lockedHintVisible);
+  const dismissLockedHint = useClientWizardStore((s) => s.dismissLockedHint);
   const [pickerOpen, setPickerOpen] = useState(false);
   const cardRefs = useRef<Partial<Record<AgentCountry, HTMLDivElement | null>>>({});
   const agentInfoRefs = useRef<Map<string, AgentInfoEditorHandle>>(new Map());
@@ -164,6 +167,16 @@ export const StepShops = forwardRef<StepShopsHandle>(function StepShops(_props, 
 
   return (
     <div>
+      {isAppend && showLockedHint ? (
+        <Alert
+          type="info"
+          showIcon
+          closable
+          onClose={dismissLockedHint}
+          message="该客户已存在，正在追加代理信息。若实际想新建其他客户，请点「上一步」修改统一社会信用代码/身份证号，改号后会自动退出追加。"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
       {agentInfos.length === 0 && existingAgentInfoDrafts.length === 0 ? (
         <div style={{ marginBottom: 16, textAlign: 'center' }}>
           <Empty description="尚未添加代理信息" style={{ marginBottom: 16 }} />

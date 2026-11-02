@@ -8,13 +8,13 @@ const OPTIONS: { type: ClientType; title: string; desc: string; icon: React.Reac
   {
     type: 'COMPANY',
     title: '公司',
-    desc: '需上传营业执照，自动识别公司信息',
+    desc: '可上传营业执照自动识别，也可手填公司信息',
     icon: <BankOutlined style={{ fontSize: 32, color: brandColors.primary }} />,
   },
   {
     type: 'INDIVIDUAL',
     title: '个人',
-    desc: '需上传身份证，自动识别个人信息',
+    desc: '可上传身份证自动识别，也可手填个人信息',
     icon: <UserOutlined style={{ fontSize: 32, color: brandColors.primary }} />,
   },
 ];

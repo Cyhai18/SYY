@@ -51,6 +51,8 @@ export interface ListClientsParams {
   /** 提交日期区间，格式 YYYY-MM-DD */
   submittedFrom?: string;
   submittedTo?: string;
+  /** 录入账户（负责人 ownerId），仅 ADMIN/SUPERADMIN 使用 */
+  ownerId?: string;
 }
 
 export interface ListClientsResult {
@@ -70,6 +72,7 @@ function buildQuery(params: ListClientsParams): string {
   if (params.agentCountry) query.set('agentCountry', params.agentCountry);
   if (params.submittedFrom) query.set('submittedFrom', params.submittedFrom);
   if (params.submittedTo) query.set('submittedTo', params.submittedTo);
+  if (params.ownerId) query.set('ownerId', params.ownerId);
   const qs = query.toString();
   return qs ? `?${qs}` : '';
 }
@@ -112,12 +115,13 @@ export const clientsApi = {
     apiClient.patch<ClientDetail>(`/clients/${clientId}/agent-infos/${agentInfoId}`, payload),
 
   /**
-   * 证件 OCR 识别成功后触发的查重：命中已存在客户时返回其 companyInfo/legalRepInfo，用于前端回填表单并切换到追加模式。
-   * `owned: false` 表示命中的客户存在但归属于其他用户，此时 `client` 恒为 `null`，前端应阻断流程、禁止继续新增/修改。
+   * 向导 / 导入 Review 查重。参数为唯一标识（企业=信用代码，个人=身份证号；建议已 normalize）。
+   * 命中且当前用户可操作时返回 companyInfo/legalRepInfo 等，供追加模式回填；
+   * `owned: false` 时 `client` 恒为 null，前端应阻断。
    */
-  checkDuplicate: (creditCode: string) =>
+  checkDuplicate: (uniqueIdentifier: string) =>
     apiClient.get<{ exists: boolean; owned: boolean; client: DuplicateCheckResult | null }>(
-      `/clients/duplicate-check?creditCode=${encodeURIComponent(creditCode)}`,
+      `/clients/duplicate-check?creditCode=${encodeURIComponent(uniqueIdentifier)}`,
     ),
 
   /** 老客户追加代理信息：与 create 一样走 multipart，统一信用代码/身份证号即便携带也会被后端忽略。 */
