@@ -119,7 +119,7 @@ services/doc-service/
   templates/             # 由 apps/api/template/*.docx 复制/同步过来（占位符已替换）
     OVERSEA_WALKERS_GB.docx
     OVERSEA_WALKERS_EU.docx
-    EU_CONSULTEN_SRLS.docx
+    EU_CONSULTEN_SRLS.docx   # 已下架公司，仅存量重新生成证书仍可能用到
     OVERSEA_WALKERS_US.docx
     OVERSEA_WALKERS_TR.docx
     OVERSEA_WALKERS_CA.docx

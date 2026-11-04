@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFiles,
@@ -18,9 +19,11 @@ import { validate } from 'class-validator';
 import { AttachmentType, ClientStatus } from '@prisma/client';
 import type { Response } from 'express';
 import { ClientsService, type ClientAttachmentInput } from './clients.service';
+import { WizardDraftService } from './wizard-draft.service';
 import { AppendAgentInfoDto, ClientPayloadDto } from './dto/client-payload.dto';
 import { UpdateAgentInfoDto, UpdateClientDto } from './dto/update-client.dto';
 import { ListClientsDto } from './dto/list-clients.dto';
+import { SaveWizardDraftDto } from './dto/wizard-draft.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ReqMeta } from '../common/decorators/request-meta.decorator';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
@@ -35,7 +38,10 @@ interface ClientAttachmentFiles {
 
 @Controller('clients')
 export class ClientsController {
-  constructor(private readonly clientsService: ClientsService) {}
+  constructor(
+    private readonly clientsService: ClientsService,
+    private readonly wizardDraftService: WizardDraftService,
+  ) {}
 
   /**
    * 提交改为 multipart/form-data：文字字段以 JSON 字符串放在 `payload` 字段，
@@ -57,8 +63,9 @@ export class ClientsController {
     @ReqMeta() meta: RequestMeta,
   ) {
     const dto = await this.parsePayload(payloadJson);
+    // 证件图片选填：唯一标识与主体/法人字段已支持手填，附件仅作可选留档/OCR 来源。
+    // 批量导入仍在 RowValidatorService 按类型要求图片（模板无手填公司/法人列），不走此处。
     const attachments = this.collectAttachments(files);
-    this.assertRequiredAttachments(dto.clientType, attachments);
     // /clients/new 向导录入的客户统一置为"正常"，与批量导入（默认待审核）区分开。
     return this.clientsService.createClient(
       dto,
@@ -68,25 +75,6 @@ export class ClientsController {
       attachments,
       ClientStatus.NORMAL,
     );
-  }
-
-  /**
-   * 单条录入向导要求营业执照/身份证图片必填（批量导入走 Excel 内嵌图片，识别失败会转人工核对，
-   * 不在此处强制，避免误伤既有导入流程）。
-   */
-  private assertRequiredAttachments(
-    clientType: ClientPayloadDto['clientType'],
-    attachments: ClientAttachmentInput[],
-  ) {
-    const types = new Set(attachments.map((a) => a.type));
-    if (clientType === 'COMPANY' && !types.has(AttachmentType.BUSINESS_LICENSE)) {
-      throw new BadRequestException('请上传营业执照');
-    }
-    if (clientType === 'INDIVIDUAL') {
-      if (!types.has(AttachmentType.ID_CARD_FRONT) || !types.has(AttachmentType.ID_CARD_BACK)) {
-        throw new BadRequestException('请上传身份证人像面和国徽面');
-      }
-    }
   }
 
   private async parsePayload(payloadJson: string): Promise<ClientPayloadDto> {
@@ -194,6 +182,31 @@ export class ClientsController {
       throw new BadRequestException('uniqueIdentifier 不能为空');
     }
     return this.clientsService.checkDuplicate(raw, user!);
+  }
+
+  /**
+   * 新增客户向导草稿（每用户 1 槽）。须声明在 `:id` 之前。
+   * 与 Client 主数据解耦：不进列表、不做建档强校验、不存证件文件。
+   * meta：进页轻量探测（不拉 payload）；完整 GET 仅在「复原」时使用。
+   */
+  @Get('wizard-draft/meta')
+  async getWizardDraftMeta(@CurrentUser() user: AuthenticatedUser) {
+    return this.wizardDraftService.getMeta(user);
+  }
+
+  @Get('wizard-draft')
+  async getWizardDraft(@CurrentUser() user: AuthenticatedUser) {
+    return this.wizardDraftService.get(user);
+  }
+
+  @Put('wizard-draft')
+  async saveWizardDraft(@Body() dto: SaveWizardDraftDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.wizardDraftService.save(user, dto.payload);
+  }
+
+  @Delete('wizard-draft')
+  async deleteWizardDraft(@CurrentUser() user: AuthenticatedUser) {
+    return this.wizardDraftService.remove(user);
   }
 
   @Get(':id')

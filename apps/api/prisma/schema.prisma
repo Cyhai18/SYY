@@ -29,12 +29,13 @@ model User {
   actionLogs    ActionLog[]
   refreshTokens RefreshToken[]
 
-  ownedClients   Client[]          @relation("ClientOwner")
-  createdClients Client[]          @relation("ClientCreatedBy")
-  updatedClients Client[]          @relation("ClientUpdatedBy")
+  ownedClients   Client[]           @relation("ClientOwner")
+  createdClients Client[]           @relation("ClientCreatedBy")
+  updatedClients Client[]           @relation("ClientUpdatedBy")
   certificates   Certificate[]
   importJobs     ClientImportJob[]
   trackedClients ClientTracker[]
+  wizardDraft    ClientWizardDraft?
 }
 
 model ActionLog {
@@ -100,11 +101,12 @@ enum AgentCountry {
   CA // 加拿大
 }
 
-// 代理公司为固定枚举值，与 AgentCountry 一一（或一对多）映射，见 @funtax/shared 的 AGENT_COUNTRY_COMPANIES
+// 代理公司为固定枚举值，与 AgentCountry 映射见 @funtax/shared 的 AGENT_COUNTRY_COMPANIES（新建/导入可选列表）。
+// EU_CONSULTEN_SRLS 已从可选列表下架，枚举仍保留以兼容存量 AgentInfo 与证书重新生成，禁止再写入新数据。
 enum AgentCompany {
   OVERSEA_WALKERS_GB // 英国 - OVERSEA WALKERS LIMITED
   OVERSEA_WALKERS_EU // 欧盟 - Oversea Walkers
-  EU_CONSULTEN_SRLS // 欧盟 - EU Consulten Srls
+  EU_CONSULTEN_SRLS // 欧盟 - EU Consulten Srls（已下架，仅存量）
   OVERSEA_WALKERS_US // 美国 - Oversea Walkers LLC
   OVERSEA_WALKERS_TR // 土耳其 - OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi
   OVERSEA_WALKERS_CA // 加拿大 - Oversea Walkers
@@ -372,4 +374,21 @@ model ClientImportItem {
 
   @@index([jobId])
   @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// 新增客户向导草稿（与 Client 主数据解耦，不进客户列表、不触发证书）
+// 每用户最多 1 份；仅存可序列化表单快照，证件文件不进入草稿（选填且复原后可重传）。
+// ---------------------------------------------------------------------------
+
+model ClientWizardDraft {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  /// 向导快照：current/mode/clientType/联系方式/companyInfo/legalRepInfo/agentInfos 等
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([updatedAt])
 }

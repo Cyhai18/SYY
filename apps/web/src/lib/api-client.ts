@@ -225,7 +225,9 @@ export const apiClient = {
   get: <T>(path: string) => request<T>(path, { method: 'GET' }),
   post: <T>(path: string, body?: unknown, opts?: Partial<RequestOptions>) =>
     request<T>(path, { method: 'POST', body, ...opts }),
+  put: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
+  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   postBinary: (path: string, body?: unknown) => requestBinary(path, { method: 'POST', body }),
   getBinary: (path: string) => requestBinary(path, { method: 'GET' }),
   postMultipart: <T>(path: string, formData: FormData) =>

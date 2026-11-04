@@ -58,40 +58,82 @@ export class AuthService {
       throw error;
     }
 
-    await this.actionLogService.record({
-      userId: user.id,
-      action: 'REGISTER',
-      ip: meta.ip,
-      userAgent: meta.userAgent,
-    });
-
-    const tokens = await this.issueTokenPair(user);
-    return { user: this.toPublicUser(user), ...tokens };
+    return this.finishAuth(user, 'REGISTER', meta);
   }
 
+  /**
+   * 登录：密码路径要求账号已存在；验证码路径在验码通过后，未注册手机号自动建号（与独立注册页并存）。
+   * 自动注册不设 password，用户可之后在个人中心设置。
+   */
   async login(dto: LoginDto, meta: RequestMeta) {
-    const user = await this.prisma.user.findUnique({ where: { phone: dto.phone } });
-    if (!user) {
-      throw new UnauthorizedException('手机号或密码/验证码不正确');
-    }
-
+    // 与历史一致：同时带 code+password 时走验证码（前端只会传一种）
     if (dto.code) {
-      this.smsCodeService.verify('login', dto.phone, dto.code);
-    } else if (dto.password) {
-      if (!user.password || !(await bcrypt.compare(dto.password, user.password))) {
-        throw new UnauthorizedException('手机号或密码不正确');
+      return this.loginWithSmsCode(dto.phone, dto.code, meta);
+    }
+    if (dto.password) {
+      return this.loginWithPassword(dto.phone, dto.password, meta);
+    }
+    throw new BadRequestException('请提供验证码或密码');
+  }
+
+  private async loginWithPassword(phone: string, password: string, meta: RequestMeta) {
+    const user = await this.prisma.user.findUnique({ where: { phone } });
+    if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
+      throw new UnauthorizedException('手机号或密码不正确');
+    }
+    this.assertUserActive(user.status);
+    return this.finishAuth(user, 'LOGIN', meta);
+  }
+
+  private async loginWithSmsCode(phone: string, code: string, meta: RequestMeta) {
+    // 先验码再查/建用户，避免错误验证码刷出幽灵账号
+    this.smsCodeService.verify('login', phone, code);
+
+    let user = await this.prisma.user.findUnique({ where: { phone } });
+    let isNew = false;
+    if (!user) {
+      try {
+        user = await this.prisma.user.create({ data: { phone } });
+        isNew = true;
+      } catch (error) {
+        // 并发首次登录同一手机号：另一请求已建号，改为走已有用户
+        if (isUniqueConstraintError(error)) {
+          user = await this.prisma.user.findUnique({ where: { phone } });
+          if (!user) throw error;
+        } else {
+          throw error;
+        }
       }
-    } else {
-      throw new BadRequestException('请提供验证码或密码');
     }
 
+    this.assertUserActive(user.status);
+    return this.finishAuth(user, isNew ? 'REGISTER' : 'LOGIN', meta);
+  }
+
+  private assertUserActive(status: number) {
+    if (status !== 1) {
+      throw new UnauthorizedException('账号不可用');
+    }
+  }
+
+  private async finishAuth(
+    user: {
+      id: string;
+      phone: string;
+      email: string | null;
+      nickname: string;
+      avatarUrl: string | null;
+      role: AuthenticatedUser['role'];
+    },
+    action: 'LOGIN' | 'REGISTER',
+    meta: RequestMeta,
+  ) {
     await this.actionLogService.record({
       userId: user.id,
-      action: 'LOGIN',
+      action,
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
-
     const tokens = await this.issueTokenPair(user);
     return { user: this.toPublicUser(user), ...tokens };
   }

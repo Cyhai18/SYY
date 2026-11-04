@@ -122,6 +122,9 @@ export interface ProductPayload {
 /**
  * 代理公司为固定枚举值：同一 title 在不同国家下可能重复（如均叫 "Oversea Walkers"），
  * 故用语义化 value 区分；后续不同代理公司对应的操作逻辑（如后续跟进流程）都基于此 value 分支。
+ *
+ * `EU_CONSULTEN_SRLS` 已从新建/导入可选列表下架（方案 A），仍保留类型与展示文案，
+ * 以兼容库内历史数据、详情展示与证书重新生成；不可再出现在 `AGENT_COUNTRY_COMPANIES` 中。
  */
 export type AgentCompany =
   | 'OVERSEA_WALKERS_GB'
@@ -134,16 +137,20 @@ export type AgentCompany =
 export const AGENT_COMPANY_LABELS: Record<AgentCompany, string> = {
   OVERSEA_WALKERS_GB: 'OVERSEA WALKERS LIMITED',
   OVERSEA_WALKERS_EU: 'Oversea Walkers',
+  /** @deprecated 已下架，仅存量展示 */
   EU_CONSULTEN_SRLS: 'EU Consulten Srls',
   OVERSEA_WALKERS_US: 'Oversea Walkers LLC',
   OVERSEA_WALKERS_TR: 'OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi',
   OVERSEA_WALKERS_CA: 'Oversea Walkers',
 };
 
-/** 代理国家 -> 可选代理公司列表；选择代理国家后，代理公司下拉框据此过滤选项。 */
+/**
+ * 代理国家 -> **新建/编辑可选** 代理公司列表（下拉框数据源）。
+ * 不含已下架公司；存量 `EU_CONSULTEN_SRLS` 由编辑器额外把当前值并入选项，便于展示或改选。
+ */
 export const AGENT_COUNTRY_COMPANIES: Record<AgentCountry, AgentCompany[]> = {
   GB: ['OVERSEA_WALKERS_GB'],
-  EU: ['OVERSEA_WALKERS_EU', 'EU_CONSULTEN_SRLS'],
+  EU: ['OVERSEA_WALKERS_EU'],
   US: ['OVERSEA_WALKERS_US'],
   TR: ['OVERSEA_WALKERS_TR'],
   CA: ['OVERSEA_WALKERS_CA'],

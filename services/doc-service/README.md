@@ -68,9 +68,10 @@ POST /certificate/generate  { templateKey, data } → application/pdf（二进�
 ```
 
 `templateKey` = `AgentCompany` 枚举值（`OVERSEA_WALKERS_GB` / `OVERSEA_WALKERS_EU` /
-`EU_CONSULTEN_SRLS` / `OVERSEA_WALKERS_US` / `OVERSEA_WALKERS_TR`），对应 `templates/` 目录下
-同名 `.docx` 模板。`data` 字段命名与模板占位符一致，详见设计文档第三/五节，所有模板共用
-同一套渲染数据结构，无需按 `templateKey` 做字段差异处理。
+`OVERSEA_WALKERS_US` / `OVERSEA_WALKERS_TR` / `OVERSEA_WALKERS_CA`；另保留
+`EU_CONSULTEN_SRLS` 仅供存量证书重新生成），对应 `templates/` 目录下同名 `.docx` 模板。
+`data` 字段命名与模板占位符一致，详见设计文档第三/五节，所有模板共用同一套渲染数据结构，
+无需按 `templateKey` 做字段差异处理。
 
 ## 已知限制 / 后续优化方向
 

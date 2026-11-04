@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Form, Space, Steps, message } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { normalizeIdentifier, type ClientPayload } from '@funtax/shared';
-import { useClientWizardStore } from '../../store/client-wizard-store';
+import {
+  buildWizardDraftSnapshot,
+  useClientWizardStore,
+  type WizardDraftSnapshot,
+} from '../../store/client-wizard-store';
 import { clientsApi } from '../../lib/clients-api';
 import { runWizardDuplicateCheck } from './hooks/useDuplicateCheck';
 import { StepType } from './steps/StepType';
@@ -12,7 +16,7 @@ import { StepLegalRep } from './steps/StepLegalRep';
 import { StepShops, type StepShopsHandle } from './steps/StepShops';
 import { WIZARD_STEP, resolvePrevStep } from './wizard-steps';
 
-/** 新建授权客户向导：注册类型 → 主体/个人信息 → 代理信息 3 个可见步骤（"公司信息"与"个人信息"互斥，合并展示为一个 tab）。 */
+/** 新建授权客户向导：注册类型 → 主体/个人信息 → 代理信息；支持服务端草稿手动保存/复原（跨设备）。 */
 export function ClientWizardPage() {
   const navigate = useNavigate();
   const current = useClientWizardStore((s) => s.current);
@@ -20,14 +24,91 @@ export function ClientWizardPage() {
   const clientType = useClientWizardStore((s) => s.clientType);
   const mode = useClientWizardStore((s) => s.mode);
   const reset = useClientWizardStore((s) => s.reset);
+  const hydrateFromDraft = useClientWizardStore((s) => s.hydrateFromDraft);
   const [submitting, setSubmitting] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  /** 服务端是否存在草稿（进页 meta 探测 / 暂存成功后为 true；提交清空后为 false）。 */
+  const [hasDraft, setHasDraft] = useState(false);
+  /**
+   * 本会话是否已点过「复原」。已复原后即使再暂存也不再显示「复原」——
+   * 再点只会把刚写入的内容灌回表单，对已打开的向导没有实际意义；下次重新进入页面再探测。
+   */
+  const [restoredInSession, setRestoredInSession] = useState(false);
   const isAppend = mode === 'APPEND';
   // 校验交由各 Step 自身的 antd Form 承担，实例在此持有，"下一步"时调用 validateFields()
   const [companyForm] = Form.useForm();
   const [legalRepForm] = Form.useForm();
   const stepShopsRef = useRef<StepShopsHandle>(null);
 
-  useEffect(() => reset, [reset]);
+  /** 复原后：当前已挂载的 Form 需 setFieldsValue；未挂载的 Step 稍后靠 initialValues 读 store。 */
+  const syncFormsFromStore = useCallback(() => {
+    const s = useClientWizardStore.getState();
+    companyForm.setFieldsValue({ ...s.companyInfo, phone: s.phone, email: s.email });
+    legalRepForm.setFieldsValue({ ...s.legalRepInfo, phone: s.phone, email: s.email });
+  }, [companyForm, legalRepForm]);
+
+  // 进页清空内存态并轻量探测是否有草稿；不自动复原。离开时清空内存。
+  useEffect(() => {
+    reset();
+    let cancelled = false;
+    void clientsApi
+      .getWizardDraftMeta()
+      .then((meta) => {
+        if (!cancelled) setHasDraft(Boolean(meta?.exists));
+      })
+      .catch(() => {
+        if (!cancelled) setHasDraft(false);
+      });
+    return () => {
+      cancelled = true;
+      reset();
+    };
+  }, [reset]);
+
+  const handleSaveDraft = async () => {
+    setSavingDraft(true);
+    try {
+      await clientsApi.saveWizardDraft(
+        buildWizardDraftSnapshot() as unknown as Record<string, unknown>,
+      );
+      setHasDraft(true);
+      void message.success('已暂存');
+    } catch (err) {
+      void message.error(err instanceof Error ? err.message : '暂存失败');
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const handleRestoreDraft = async () => {
+    setRestoring(true);
+    try {
+      const draft = await clientsApi.getWizardDraft();
+      if (!draft?.exists) {
+        setHasDraft(false);
+        void message.info('没有可复原的内容');
+        return;
+      }
+      hydrateFromDraft(draft.payload as WizardDraftSnapshot);
+      syncFormsFromStore();
+      setRestoredInSession(true);
+      void message.success('已复原');
+    } catch (err) {
+      void message.error(err instanceof Error ? err.message : '复原失败');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const clearDraftSilently = async () => {
+    try {
+      await clientsApi.deleteWizardDraft();
+    } catch {
+      // 提交已成功，草稿清理失败不阻断跳转
+    }
+    setHasDraft(false);
+  };
 
   const isIndividual = clientType === 'INDIVIDUAL';
   const isCompany = clientType === 'COMPANY';
@@ -189,6 +270,7 @@ export function ClientWizardPage() {
         });
         void message.success('客户创建成功');
       }
+      await clearDraftSilently();
       reset();
       navigate('/clients');
     } catch (err) {
@@ -197,6 +279,9 @@ export function ClientWizardPage() {
       setSubmitting(false);
     }
   };
+
+  // 有表单内容的步骤才露出底栏（注册类型步无表单字段，不展示保存/复原）
+  const showFormFooter = current > WIZARD_STEP.TYPE;
 
   return (
     <div className="client-wizard-page">
@@ -219,14 +304,27 @@ export function ClientWizardPage() {
         {current === WIZARD_STEP.AGENT_INFO ? <StepShops ref={stepShopsRef} /> : null}
       </Card>
 
-      {current > WIZARD_STEP.TYPE ? (
+      {showFormFooter ? (
         <div className="wizard-footer">
-          <Space>
-            <Button onClick={goPrev}>上一步</Button>
-            <Button type="primary" loading={submitting} onClick={() => void goNext()}>
-              {current === WIZARD_STEP.AGENT_INFO ? (isAppend ? '提交追加' : '提交') : '下一步'}
-            </Button>
-          </Space>
+          <div className="wizard-footer-bar">
+            {/* 左侧：暂存始终可见；复原仅在「有服务端草稿且本会话未复原」时显示。右侧原导航不动。 */}
+            <Space size={4} className="wizard-draft-actions">
+              <Button type="link" loading={savingDraft} onClick={() => void handleSaveDraft()}>
+                暂存
+              </Button>
+              {hasDraft && !restoredInSession ? (
+                <Button type="link" loading={restoring} onClick={() => void handleRestoreDraft()}>
+                  复原
+                </Button>
+              ) : null}
+            </Space>
+            <Space>
+              <Button onClick={goPrev}>上一步</Button>
+              <Button type="primary" loading={submitting} onClick={() => void goNext()}>
+                {current === WIZARD_STEP.AGENT_INFO ? (isAppend ? '提交追加' : '提交') : '下一步'}
+              </Button>
+            </Space>
+          </div>
           {current === WIZARD_STEP.AGENT_INFO ? (
             <Alert
               type="info"

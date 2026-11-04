@@ -62,6 +62,17 @@ export interface ListClientsResult {
   items: ClientListItem[];
 }
 
+/** 进页探测用：仅元数据。null 表示当前用户无草稿。 */
+export interface WizardDraftMeta {
+  exists: true;
+  updatedAt: string;
+}
+
+/** 完整草稿（含 payload），用于「复原」。 */
+export interface WizardDraftResult extends WizardDraftMeta {
+  payload: Record<string, unknown>;
+}
+
 function buildQuery(params: ListClientsParams): string {
   const query = new URLSearchParams();
   if (params.page) query.set('page', String(params.page));
@@ -182,4 +193,17 @@ export const clientsApi = {
    */
   exportCertificatesZip: (params: Omit<ListClientsParams, 'page' | 'pageSize'> = {}) =>
     apiClient.getBinary(`/clients/export-certificates${buildQuery(params)}`),
+
+  /** 进页探测：仅 exists/updatedAt，不下载 payload。 */
+  getWizardDraftMeta: () => apiClient.get<WizardDraftMeta | null>('/clients/wizard-draft/meta'),
+
+  /** 读取完整草稿（含 payload）；无草稿时后端返回 null。 */
+  getWizardDraft: () => apiClient.get<WizardDraftResult | null>('/clients/wizard-draft'),
+
+  /** 覆盖保存向导草稿（仅手动触发）；payload 为可 JSON 化的 store 快照。 */
+  saveWizardDraft: (payload: Record<string, unknown>) =>
+    apiClient.put<WizardDraftMeta>('/clients/wizard-draft', { payload }),
+
+  /** 丢弃草稿（提交成功时调用）。 */
+  deleteWizardDraft: () => apiClient.delete<{ deleted: boolean }>('/clients/wizard-draft'),
 };

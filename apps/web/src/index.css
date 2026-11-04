@@ -344,13 +344,28 @@ body {
 .wizard-footer {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   gap: calc(var(--space) * 1.5);
+}
+
+/* 左：暂存/复原；右：上一步 + 下一步/提交 */
+.wizard-footer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* link 按钮默认左右 padding 较大，压紧「暂存」「复原」间距 */
+.wizard-draft-actions .ant-btn-link {
+  padding-inline: 4px;
 }
 
 .wizard-footer-hint.ant-alert {
   padding: 6px 12px;
   font-size: 13px;
+  align-self: flex-end;
 }
 
 .wizard-step-type {

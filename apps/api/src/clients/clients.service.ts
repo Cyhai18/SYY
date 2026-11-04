@@ -353,6 +353,19 @@ export class ClientsService {
   }
 
   /**
+   * 已下架代理公司禁止在 create / append / 改公司为下架值时写入。
+   * 与 @funtax/shared AGENT_COUNTRY_COMPANIES 对齐；Prisma 枚举仍保留存量值。
+   */
+  private assertAgentCompanySelectable(agentCompany: string, opts?: { allowUnchanged?: string }) {
+    if (agentCompany !== 'EU_CONSULTEN_SRLS') return;
+    // 编辑时当前已是下架公司且未改公司：允许保存其它字段
+    if (opts?.allowUnchanged === agentCompany) return;
+    throw new BadRequestException(
+      '代理公司「EU Consulten Srls」已下架，请改选 Oversea Walkers（欧盟）',
+    );
+  }
+
+  /**
    * @param actor 创建者；ownerId 缺省时默认归属创建者本人
    * @param attachments 营业执照/身份证图片，事务提交后落盘，落盘失败只记 warning，不回滚客户创建
    */
@@ -365,6 +378,9 @@ export class ClientsService {
     status?: ClientStatus,
   ) {
     const normalized = this.normalizeAndAssertIdentifiers(payload);
+    for (const agent of normalized.agentInfos) {
+      this.assertAgentCompanySelectable(agent.agentCompany);
+    }
     const duplicate = await this.findDuplicate(normalized.uniqueIdentifier);
     if (duplicate) {
       throw new ConflictException(
@@ -877,6 +893,11 @@ export class ClientsService {
       throw new NotFoundException('代理信息不存在');
     }
 
+    // 不允许把公司改成已下架；存量已是下架公司且未改公司则可继续改其它字段
+    this.assertAgentCompanySelectable(dto.agentCompany, {
+      allowUnchanged: agentInfo.agentCompany,
+    });
+
     if (dto.agentCompany !== agentInfo.agentCompany) {
       const conflict = await this.prisma.agentInfo.findFirst({
         where: {
@@ -956,6 +977,7 @@ export class ClientsService {
     );
     const seenCombos = new Set<string>();
     for (const agent of payload.agentInfos) {
+      this.assertAgentCompanySelectable(agent.agentCompany);
       const combo = `${agent.country}:${agent.agentCompany}`;
       if (existingCombos.has(combo) || seenCombos.has(combo)) {
         throw new ConflictException(

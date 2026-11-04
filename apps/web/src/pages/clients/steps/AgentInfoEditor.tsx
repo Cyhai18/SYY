@@ -18,12 +18,20 @@ import { ShopEditor, type ShopEditorHandle } from './ShopEditor';
  * 代理国家文字不在枚举标签范围内，见 row-validator.service.ts 的"代理国家不合法"问题），
  * 此时 `AGENT_COUNTRY_COMPANIES[country]` 会是 `undefined`，直接 `.map()` 会抛错导致整页空白，
  * 因此这里需要显式兜底为空数组，把"不合法"交给下方必填校验提示，而不是让页面崩溃。
+ *
+ * `currentCompany`：编辑/只读存量时，若当前值已从可选列表下架（如 EU_CONSULTEN_SRLS），
+ * 仍并入选项以便展示与改选，避免 Select 只显示裸枚举值。
  */
-const agentCompanyOptions = (country?: AgentCountry) =>
-  (country ? AGENT_COUNTRY_COMPANIES[country] : undefined)?.map((value) => ({
+const agentCompanyOptions = (country?: AgentCountry, currentCompany?: AgentCompany) => {
+  const allowed = country ? [...(AGENT_COUNTRY_COMPANIES[country] ?? [])] : [];
+  if (currentCompany && !allowed.includes(currentCompany)) {
+    allowed.push(currentCompany);
+  }
+  return allowed.map((value) => ({
     value,
     label: AGENT_COMPANY_LABELS[value],
-  })) ?? [];
+  }));
+};
 
 function createEmptyShop(): ShopDraft {
   return {
@@ -85,7 +93,7 @@ export const AgentInfoEditor = forwardRef<
   }));
 
   const update = (fields: Partial<AgentInfoDraft>) => onChange({ ...agentInfo, ...fields });
-  const companyOptions = agentCompanyOptions(agentInfo.country);
+  const companyOptions = agentCompanyOptions(agentInfo.country, agentInfo.agentCompany);
 
   const addShop = () => {
     setShopsError(null);

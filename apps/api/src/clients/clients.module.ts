@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ClientsService } from './clients.service';
+import { WizardDraftService } from './wizard-draft.service';
 import { ClientsController } from './clients.controller';
 import { FilesController } from './files.controller';
 import { StorageModule } from '../storage/storage.module';
@@ -17,6 +18,7 @@ import { ClientImportController } from './import/client-import.controller';
   controllers: [ClientImportController, ClientsController, FilesController],
   providers: [
     ClientsService,
+    WizardDraftService,
     ZipExtractorService,
     ExcelParserService,
     RowValidatorService,

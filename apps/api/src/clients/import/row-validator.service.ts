@@ -51,6 +51,7 @@ const AGENT_COUNTRY_LABELS: Record<AgentCountry, string> = {
 const AGENT_COMPANY_LABELS: Record<AgentCompany, string> = {
   OVERSEA_WALKERS_GB: 'OVERSEA WALKERS LIMITED',
   OVERSEA_WALKERS_EU: 'Oversea Walkers',
+  // 已下架：仅用于识别旧 Excel 填法后给出明确错误，不可再落库为新导入
   EU_CONSULTEN_SRLS: 'EU Consulten Srls',
   OVERSEA_WALKERS_US: 'Oversea Walkers LLC',
   OVERSEA_WALKERS_TR: 'OVERSEAWALKERS DANISMANLIK LiMiTED SiRKETi',
@@ -67,13 +68,37 @@ const AGENT_COMPANY_COUNTRY: Record<AgentCompany, AgentCountry> = {
   OVERSEA_WALKERS_CA: 'CA',
 };
 
-/** 代理公司下拉框展示用文案：公司全称 + "（国家）" 后缀，Excel 模板与人工核对表单据此展示，导入时按后缀反查 */
-const AGENT_COMPANY_LABELS_WITH_COUNTRY: Record<AgentCompany, string> = Object.fromEntries(
-  (Object.keys(AGENT_COMPANY_LABELS) as AgentCompany[]).map((key) => [
+/**
+ * 新建/导入仍可选的代理公司（与 @funtax/shared AGENT_COUNTRY_COMPANIES 对齐）。
+ * `EU_CONSULTEN_SRLS` 已下架，不进入模板下拉文案，也不允许作为导入结果落库。
+ */
+const SELECTABLE_AGENT_COMPANIES: AgentCompany[] = (
+  Object.keys(AGENT_COMPANY_LABELS) as AgentCompany[]
+).filter((key) => key !== 'EU_CONSULTEN_SRLS');
+
+/** 代理公司下拉框展示用文案：公司全称 + "（国家）" 后缀；仅含可选公司 */
+const AGENT_COMPANY_LABELS_WITH_COUNTRY: Record<string, string> = Object.fromEntries(
+  SELECTABLE_AGENT_COMPANIES.map((key) => [
     key,
     `${AGENT_COMPANY_LABELS[key]}（${AGENT_COUNTRY_LABELS[AGENT_COMPANY_COUNTRY[key]]}）`,
   ]),
-) as Record<AgentCompany, string>;
+);
+
+/**
+ * 导入反查用：可选公司（带/不带国家后缀）+ 下架公司旧填法。
+ * 模块加载时建一次 Map，避免每次 reverse 时 new Object.fromEntries。
+ * 下架值反查成功后仍由业务规则报「已下架」，避免只显示笼统「不合法」。
+ */
+const AGENT_COMPANY_REVERSE_LOOKUP = new Map<string, AgentCompany>();
+for (const key of SELECTABLE_AGENT_COMPANIES) {
+  AGENT_COMPANY_REVERSE_LOOKUP.set(AGENT_COMPANY_LABELS[key], key);
+  AGENT_COMPANY_REVERSE_LOOKUP.set(AGENT_COMPANY_LABELS_WITH_COUNTRY[key], key);
+}
+AGENT_COMPANY_REVERSE_LOOKUP.set(AGENT_COMPANY_LABELS.EU_CONSULTEN_SRLS, 'EU_CONSULTEN_SRLS');
+AGENT_COMPANY_REVERSE_LOOKUP.set(
+  `${AGENT_COMPANY_LABELS.EU_CONSULTEN_SRLS}（${AGENT_COUNTRY_LABELS.EU}）`,
+  'EU_CONSULTEN_SRLS',
+);
 
 /** 反查 label -> enum value，找不到时返回 undefined（交由后续 class-validator 判定为必填缺失/不合法） */
 function reverseLabel<T extends string>(labels: Record<T, string>, value?: string): T | undefined {
@@ -85,12 +110,9 @@ function reverseLabel<T extends string>(labels: Record<T, string>, value?: strin
   return entry?.[0];
 }
 
-/** 代理公司专用反查：兼容带国家后缀（"公司全称（国家）"，Excel 下拉框展示格式）与不带后缀两种填法 */
 function reverseAgentCompany(value?: string): AgentCompany | undefined {
-  return (
-    reverseLabel(AGENT_COMPANY_LABELS_WITH_COUNTRY, value) ??
-    reverseLabel(AGENT_COMPANY_LABELS, value)
-  );
+  if (!value) return undefined;
+  return AGENT_COMPANY_REVERSE_LOOKUP.get(value.trim());
 }
 
 /**
@@ -252,12 +274,18 @@ export class RowValidatorService {
     // 1）代理公司必须与代理国家匹配（页面下拉框按国家过滤选项，导入走文字反查需要显式校验，见
     //    docs/client-batch-import-design.md 第 8 节"枚举值不合法"）；
     // 2）同一个新客户内，代理国家不能重复（页面每个国家只能创建一条代理信息，导入按行分组理论上可能
-    //    因用户填写疏漏出现重复国家，需拦截）。
+    //    因用户填写疏漏出现重复国家，需拦截）；
+    // 3）已下架公司（EU_CONSULTEN_SRLS）禁止新建/导入，须改选该国仍可选的公司。
     // 「每条代理信息下至少一条店铺」由 AgentInfoDto.shops 的 @ArrayMinSize(1) 统一校验，此处不重复判断。
     const seenCountries = new Set<string>();
     candidate.agentInfos.forEach((agent, index) => {
       const prefix = `agentInfos[${index}]`;
-      if (agent.country && agent.agentCompany) {
+      if (agent.agentCompany === 'EU_CONSULTEN_SRLS') {
+        issues.push({
+          field: `${prefix}.agentCompany`,
+          message: '代理公司「EU Consulten Srls」已下架，请改选 Oversea Walkers（欧盟）',
+        });
+      } else if (agent.country && agent.agentCompany) {
         const expectedCountry = AGENT_COMPANY_COUNTRY[agent.agentCompany];
         if (expectedCountry !== agent.country) {
           issues.push({ field: `${prefix}.agentCompany`, message: '代理公司与代理国家不匹配' });

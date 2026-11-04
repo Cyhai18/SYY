@@ -33,7 +33,7 @@ export interface AgentInfoDraft extends AgentInfoPayload {
  */
 export type WizardMode = 'CREATE' | 'APPEND';
 
-interface ClientWizardState {
+export interface ClientWizardState {
   current: number;
   mode: WizardMode;
   /** APPEND 模式下命中的已存在客户 id；CREATE 模式为 null。 */
@@ -105,7 +105,31 @@ interface ClientWizardState {
    * 回到主体信息步骤继续当新建客户填写；保留当前表单其它已填内容。
    */
   exitAppendMode: (opts?: { returnToStep?: number }) => void;
+  /**
+   * 从服务端草稿复原：只恢复可序列化字段；证件 File / 提示条始终回到初始空态。
+   * 调用方负责在复原后同步 antd Form 的 setFieldsValue。
+   */
+  hydrateFromDraft: (payload: WizardDraftSnapshot) => void;
   reset: () => void;
+}
+
+/**
+ * 写入服务端草稿的快照形状（与 hydrateFromDraft 对称）。
+ * 不含 File、OCR/锁定提示条等瞬时 UI 态。
+ */
+export interface WizardDraftSnapshot {
+  current?: number;
+  mode?: WizardMode;
+  existingClientId?: string | null;
+  lockedUniqueIdentifier?: string | null;
+  clientType?: ClientType | null;
+  phone?: string;
+  email?: string;
+  remark?: string;
+  companyInfo?: Partial<CompanyInfoPayload>;
+  legalRepInfo?: Partial<LegalRepresentativePayload>;
+  agentInfos?: AgentInfoDraft[];
+  existingAgentInfos?: DuplicateCheckAgentInfo[];
 }
 
 const initialState = {
@@ -140,6 +164,10 @@ function stripUndefined<T extends object>(fields: Partial<T>): Partial<T> {
     if (fields[key] !== undefined) result[key] = fields[key];
   }
   return result;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 let ocrFailedHintTimer: ReturnType<typeof setTimeout> | null = null;
@@ -212,9 +240,67 @@ export const useClientWizardStore = create<ClientWizardState>((set) => ({
       ...(opts?.returnToStep !== undefined ? { current: opts.returnToStep } : {}),
     });
   },
+  hydrateFromDraft: (payload) => {
+    if (ocrFailedHintTimer) clearTimeout(ocrFailedHintTimer);
+    if (lockedHintTimer) clearTimeout(lockedHintTimer);
+    const mode: WizardMode = payload.mode === 'APPEND' ? 'APPEND' : 'CREATE';
+    const clientType =
+      payload.clientType === 'COMPANY' || payload.clientType === 'INDIVIDUAL'
+        ? payload.clientType
+        : null;
+    set({
+      ...initialState,
+      current: typeof payload.current === 'number' && payload.current >= 0 ? payload.current : 0,
+      mode,
+      existingClientId:
+        mode === 'APPEND' && typeof payload.existingClientId === 'string'
+          ? payload.existingClientId
+          : null,
+      lockedUniqueIdentifier:
+        mode === 'APPEND' && typeof payload.lockedUniqueIdentifier === 'string'
+          ? payload.lockedUniqueIdentifier
+          : null,
+      clientType,
+      phone: typeof payload.phone === 'string' ? payload.phone : '',
+      email: typeof payload.email === 'string' ? payload.email : undefined,
+      remark: typeof payload.remark === 'string' ? payload.remark : undefined,
+      companyInfo: isPlainObject(payload.companyInfo)
+        ? (payload.companyInfo as Partial<CompanyInfoPayload>)
+        : {},
+      legalRepInfo: isPlainObject(payload.legalRepInfo)
+        ? (payload.legalRepInfo as Partial<LegalRepresentativePayload>)
+        : {},
+      agentInfos: Array.isArray(payload.agentInfos) ? (payload.agentInfos as AgentInfoDraft[]) : [],
+      existingAgentInfos:
+        mode === 'APPEND' && Array.isArray(payload.existingAgentInfos)
+          ? (payload.existingAgentInfos as DuplicateCheckAgentInfo[])
+          : [],
+      // 证件与提示条不进草稿，保持 initialState 空值
+    });
+  },
   reset: () => {
     if (ocrFailedHintTimer) clearTimeout(ocrFailedHintTimer);
     if (lockedHintTimer) clearTimeout(lockedHintTimer);
     set({ ...initialState });
   },
 }));
+
+/** 从当前 store 抽出可写入服务端的草稿快照（剥离 File 与瞬时提示态）。 */
+export function buildWizardDraftSnapshot(
+  state: ClientWizardState = useClientWizardStore.getState(),
+): WizardDraftSnapshot {
+  return {
+    current: state.current,
+    mode: state.mode,
+    existingClientId: state.existingClientId,
+    lockedUniqueIdentifier: state.lockedUniqueIdentifier,
+    clientType: state.clientType,
+    phone: state.phone,
+    email: state.email,
+    remark: state.remark,
+    companyInfo: state.companyInfo,
+    legalRepInfo: state.legalRepInfo,
+    agentInfos: state.agentInfos,
+    existingAgentInfos: state.existingAgentInfos,
+  };
+}
