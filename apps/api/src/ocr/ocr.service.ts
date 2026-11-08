@@ -38,6 +38,9 @@ export interface ProviderResult<T> {
 export interface OcrResult<T> {
   fields: T;
   recognized: boolean;
+  status?: 'complete' | 'partial' | 'unrecognized';
+  missingFields?: string[];
+  reviewRequired?: boolean;
 }
 
 /** 引擎无关的 OCR Provider 接口，当前实现见 providers/rapid-ocr.provider.ts，后续可加云厂商 Provider 兜底。 */
@@ -76,6 +79,19 @@ export class OcrService {
   ): Promise<OcrResult<IdCardFields>> {
     const result = await this.provider.recognizeIdCard(file, side);
     const recognized = result.recognized || Boolean(result.fields.idNumber);
-    return { fields: result.fields, recognized };
+    const required = side === 'front' ? (['nameCn', 'idNumber', 'idAddressCn'] as const) : [];
+    const missingFields = required.filter((key) => !result.fields[key]);
+    const hasFields = Object.values(result.fields).some(Boolean);
+    const status =
+      side === 'back'
+        ? recognized
+          ? 'complete'
+          : 'unrecognized'
+        : missingFields.length === 0
+          ? 'complete'
+          : hasFields
+            ? 'partial'
+            : 'unrecognized';
+    return { fields: result.fields, recognized, status, missingFields, reviewRequired: true };
   }
 }

@@ -37,6 +37,16 @@ const ID_CHECK_CODES = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
 
 export function isValidIdNumber(idNumber: string): boolean {
   if (!ID_NUMBER_RE.test(idNumber)) return false;
+  const year = Number(idNumber.slice(6, 10));
+  const month = Number(idNumber.slice(10, 12));
+  const day = Number(idNumber.slice(12, 14));
+  const birth = new Date(Date.UTC(year, month - 1, day));
+  if (
+    birth.getUTCFullYear() !== year ||
+    birth.getUTCMonth() !== month - 1 ||
+    birth.getUTCDate() !== day
+  )
+    return false;
   let total = 0;
   for (let i = 0; i < 17; i++) {
     total += Number(idNumber[i]) * ID_WEIGHTS[i];

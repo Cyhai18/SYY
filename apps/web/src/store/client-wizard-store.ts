@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type {
-  AgentCountry,
   AgentInfoPayload,
   ClientType,
   CompanyInfoPayload,
@@ -70,7 +69,9 @@ export interface ClientWizardState {
   setClientType: (type: ClientType) => void;
   setContact: (fields: { phone?: string; email?: string; remark?: string }) => void;
   setCompanyInfo: (fields: Partial<CompanyInfoPayload>) => void;
+  replaceCompanyOcrFields: (fields?: Partial<CompanyInfoPayload>) => void;
   setLegalRepInfo: (fields: Partial<LegalRepresentativePayload>) => void;
+  replaceIdOcrFields: (fields?: Partial<LegalRepresentativePayload>) => void;
   setAgentInfos: (agentInfos: AgentInfoDraft[]) => void;
   markOcrFailed: () => void;
   dismissOcrFailedHint: () => void;
@@ -174,16 +175,55 @@ let ocrFailedHintTimer: ReturnType<typeof setTimeout> | null = null;
 let lockedHintTimer: ReturnType<typeof setTimeout> | null = null;
 const HINT_AUTO_HIDE_MS = 10000;
 
+/** 每次更换营业执照完整替换这组字段；联系方式不属于证照识别结果。 */
+export const COMPANY_OCR_FIELDS = [
+  'creditCode',
+  'nameCn',
+  'nameEn',
+  'postalCode',
+  'addressCn',
+  'addressEn',
+  'provinceEn',
+  'cityEn',
+] as const satisfies readonly (keyof CompanyInfoPayload)[];
+
+export function companyOcrValues(fields: Partial<CompanyInfoPayload> = {}) {
+  return Object.fromEntries(COMPANY_OCR_FIELDS.map((key) => [key, fields[key] ?? ''])) as Record<
+    (typeof COMPANY_OCR_FIELDS)[number],
+    string
+  >;
+}
+
+export const ID_OCR_FIELDS = [
+  'idNumber',
+  'nameCn',
+  'namePinyin',
+  'idPostalCode',
+  'idAddressCn',
+  'idAddressEn',
+] as const satisfies readonly (keyof LegalRepresentativePayload)[];
+
+export function idOcrValues(fields: Partial<LegalRepresentativePayload> = {}) {
+  return Object.fromEntries(ID_OCR_FIELDS.map((key) => [key, fields[key] ?? ''])) as Record<
+    (typeof ID_OCR_FIELDS)[number],
+    string
+  >;
+}
+
 /** 新建客户向导的全局草稿态；4 个 Step 组件共享同一份 store，最终一次性提交给 `/api/clients`（或追加接口）。 */
 export const useClientWizardStore = create<ClientWizardState>((set) => ({
   ...initialState,
   setCurrent: (step) => set({ current: step }),
   setClientType: (type) => set({ clientType: type }),
-  setContact: (fields) => set((s) => ({ ...s, ...fields })),
+  setContact: (fields) => set(fields),
   setCompanyInfo: (fields) =>
     set((s) => ({ companyInfo: { ...s.companyInfo, ...stripUndefined(fields) } })),
+  replaceCompanyOcrFields: (fields) =>
+    set((s) => ({ companyInfo: { ...s.companyInfo, ...companyOcrValues(fields) } })),
   setLegalRepInfo: (fields) =>
     set((s) => ({ legalRepInfo: { ...s.legalRepInfo, ...stripUndefined(fields) } })),
+  replaceIdOcrFields: (fields) =>
+    set((s) => ({ legalRepInfo: { ...s.legalRepInfo, ...idOcrValues(fields) } })),
   setAgentInfos: (agentInfos) => set({ agentInfos }),
   markOcrFailed: () => {
     if (ocrFailedHintTimer) clearTimeout(ocrFailedHintTimer);

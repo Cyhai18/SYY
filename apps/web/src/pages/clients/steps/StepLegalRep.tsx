@@ -3,9 +3,10 @@ import { Alert, Card, Col, Form, Input, Row, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { IdcardOutlined } from '@ant-design/icons';
 import { idNumberFormRule, normalizeIdentifier } from '@funtax/shared';
-import { useClientWizardStore } from '../../../store/client-wizard-store';
+import { idOcrValues, useClientWizardStore } from '../../../store/client-wizard-store';
 import { ocrApi } from '../../../lib/ocr-api';
 import { useDuplicateCheck } from '../hooks/useDuplicateCheck';
+import { useOcrRequest } from '../hooks/useOcrRequest';
 import { CertUploadPreview } from './CertUploadPreview';
 
 interface LegalRepFormValues {
@@ -26,6 +27,7 @@ interface LegalRepFormValues {
 export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> }) {
   const legalRepInfo = useClientWizardStore((s) => s.legalRepInfo);
   const setLegalRepInfo = useClientWizardStore((s) => s.setLegalRepInfo);
+  const replaceIdOcrFields = useClientWizardStore((s) => s.replaceIdOcrFields);
   const idCardFrontFile = useClientWizardStore((s) => s.idCardFrontFile);
   const idCardBackFile = useClientWizardStore((s) => s.idCardBackFile);
   const setIdCardFile = useClientWizardStore((s) => s.setIdCardFile);
@@ -41,33 +43,73 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
   const showLockedHint = useClientWizardStore((s) => s.lockedHintVisible);
   const dismissLockedHint = useClientWizardStore((s) => s.dismissLockedHint);
   const [recognizing, setRecognizing] = useState<'front' | 'back' | null>(null);
-  const { runDuplicateCheck, isAppend } = useDuplicateCheck('身份证号', 'legalRep', form);
+  const { beginRequest, cancelRequest } = useOcrRequest();
+  const { runDuplicateCheck, invalidateDuplicateCheck, isAppend } = useDuplicateCheck(
+    '身份证号',
+    'legalRep',
+    form,
+  );
+
+  const clearIdentityFields = () => {
+    invalidateDuplicateCheck();
+    const state = useClientWizardStore.getState();
+    if (state.mode === 'APPEND') state.exitAppendMode();
+    replaceIdOcrFields();
+    form.setFieldsValue(idOcrValues());
+  };
+
+  const handleRemove = (side: 'front' | 'back') => {
+    clearIdCardFile(side);
+    if (side === 'front') {
+      cancelRequest();
+      clearIdCardFile('back');
+      clearIdentityFields();
+      setRecognizing(null);
+    }
+  };
 
   const handleUpload = async (file: File, side: 'front' | 'back') => {
-    setIdCardFile(side, file);
-    // 反面不含任何可提取的结构化字段，直接跟随提交保存图片即可，跳过 OCR 识别调用，
-    // 避免无意义的识别请求、以及"识别完成"这类不准确的提示语。
     if (side === 'back') {
+      setIdCardFile(side, file);
       void message.success('身份证反面已上传');
       return;
     }
+    const request = beginRequest();
+    if (useClientWizardStore.getState().idCardFrontFile) clearIdCardFile('back');
+    clearIdentityFields();
+    setIdCardFile(side, file);
     setRecognizing(side);
+    const isCurrent = () =>
+      request.isCurrent() && useClientWizardStore.getState().idCardFrontFile === file;
     try {
-      const result = await ocrApi.recognizeIdCard(file, side);
-      if (result.recognized) {
-        setLegalRepInfo(result.fields);
-        form.setFieldsValue(result.fields);
+      const result = await ocrApi.recognizeIdCard(file, side, request.signal);
+      if (!isCurrent()) return;
+      const hasFields = Object.values(result.fields).some(Boolean);
+      if (hasFields) {
+        replaceIdOcrFields(result.fields);
+        form.setFieldsValue(idOcrValues(result.fields));
         if (result.fields.idNumber) void runDuplicateCheck(result.fields.idNumber);
-        void message.success('身份证正面识别完成，已自动填充');
+      }
+      const complete =
+        result.status === 'complete' ||
+        (!result.status && result.recognized && result.fields.nameCn && result.fields.idAddressCn);
+      if (complete) {
+        void message.success('身份证识别完成，请核对姓名拼音、地址和邮编');
       } else {
         markOcrFailed();
-        void message.warning('未能自动识别，请手动填写以下字段');
+        void message.warning(
+          hasFields
+            ? '已填入部分识别信息，请核对并补全空缺字段'
+            : '未能自动识别，请手动填写以下字段',
+        );
       }
     } catch {
+      if (!isCurrent()) return;
       markOcrFailed();
       void message.error('识别服务暂不可用，请手动填写');
     } finally {
-      setRecognizing(null);
+      if (isCurrent()) setRecognizing(null);
+      request.finish();
     }
   };
 
@@ -121,7 +163,7 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
             placeholderText="上传身份证人像面（选填，可自动识别）"
             icon={<IdcardOutlined />}
             onUpload={(file) => void handleUpload(file, 'front')}
-            onRemove={() => clearIdCardFile('front')}
+            onRemove={() => handleRemove('front')}
           />
         </Col>
         <Col span={12}>
@@ -133,7 +175,7 @@ export function StepLegalRep({ form }: { form: FormInstance<LegalRepFormValues> 
             placeholderText="上传身份证国徽面（选填）"
             icon={<IdcardOutlined />}
             onUpload={(file) => void handleUpload(file, 'back')}
-            onRemove={() => clearIdCardFile('back')}
+            onRemove={() => handleRemove('back')}
           />
         </Col>
       </Row>

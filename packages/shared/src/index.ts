@@ -199,7 +199,11 @@ export interface DuplicateCheckResult {
 /** OCR 识别接口的统一返回结构：`fields` 为结构化字段，`recognized` 标记是否识别成功。营业执照/身份证图片仅用于识别，不落盘、不返回 fileUrl。 */
 export interface OcrResult<T> {
   fields: T;
+  /** 有效唯一标识已识别；不代表其他字段完整。 */
   recognized: boolean;
+  status?: 'complete' | 'partial' | 'unrecognized';
+  missingFields?: string[];
+  reviewRequired?: boolean;
 }
 
 export interface BusinessLicenseFields {
@@ -426,6 +430,16 @@ const ID_CHECK_CODES = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
 /** 中国大陆 18 位身份证号校验位是否通过（GB 11643-1999；入参建议先 normalizeIdentifier）。 */
 export function isValidIdNumber(idNumber: string): boolean {
   if (!ID_NUMBER_RE.test(idNumber)) return false;
+  const year = Number(idNumber.slice(6, 10));
+  const month = Number(idNumber.slice(10, 12));
+  const day = Number(idNumber.slice(12, 14));
+  const birth = new Date(Date.UTC(year, month - 1, day));
+  if (
+    birth.getUTCFullYear() !== year ||
+    birth.getUTCMonth() !== month - 1 ||
+    birth.getUTCDate() !== day
+  )
+    return false;
   let total = 0;
   for (let i = 0; i < 17; i++) {
     total += Number(idNumber[i]) * ID_WEIGHTS[i];

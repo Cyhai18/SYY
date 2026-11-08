@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Modal, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { normalizeIdentifier, validateUniqueIdentifier, type ClientType } from '@funtax/shared';
@@ -7,6 +7,8 @@ import { useClientWizardStore } from '../../../store/client-wizard-store';
 import { resolvePrevStep, WIZARD_STEP } from '../wizard-steps';
 
 export type DuplicateCheckOutcome = 'ok' | 'blocked' | 'appended';
+type ManagedModal = { destroy: () => void };
+type RegisterModal = (modal: ManagedModal) => () => void;
 
 const EMPTY_FIELDS_BY_TARGET: Record<'company' | 'legalRep', Record<string, undefined>> = {
   company: {
@@ -42,6 +44,7 @@ export async function runWizardDuplicateCheck(opts: {
   target: 'company' | 'legalRep';
   form?: FormInstance;
   isMounted?: () => boolean;
+  registerModal?: RegisterModal;
   /** 退出 APPEND 后应回到的步骤（主体/个人信息） */
   returnToStepOnExitAppend?: number;
 }): Promise<DuplicateCheckOutcome> {
@@ -76,35 +79,46 @@ export async function runWizardDuplicateCheck(opts: {
     if (!owned) {
       await new Promise<void>((resolve) => {
         let settled = false;
+        let releaseModal = () => {};
         const finish = () => {
           if (settled) return;
           settled = true;
-          state.clearRecognizedIdentity(opts.target);
-          opts.form?.setFieldsValue(EMPTY_FIELDS_BY_TARGET[opts.target]);
+          releaseModal();
+          if (!opts.isMounted || opts.isMounted()) {
+            state.clearRecognizedIdentity(opts.target);
+            opts.form?.setFieldsValue(EMPTY_FIELDS_BY_TARGET[opts.target]);
+          }
           resolve();
         };
-        Modal.error({
+        const modal = Modal.error({
           title: '该客户您无权限新增或修改，请更换号码或重新上传证件',
           onOk: finish,
           afterClose: finish,
         });
+        releaseModal = opts.registerModal?.(modal) ?? (() => {});
       });
       return 'blocked';
     }
     if (!client || client.id === state.existingClientId) return 'ok';
     return await new Promise<DuplicateCheckOutcome>((resolve) => {
       let settled = false;
+      let releaseModal = () => {};
       const finish = (outcome: DuplicateCheckOutcome) => {
         if (settled) return;
         settled = true;
+        releaseModal();
         resolve(outcome);
       };
-      Modal.confirm({
+      const modal = Modal.confirm({
         title: '该客户已存在',
         content: `该${opts.fieldLabel}已在系统中存在，是否为该客户追加新的代理信息？也可取消后修改${opts.fieldLabel}继续新建。`,
         okText: '追加代理信息',
         cancelText: '返回上一步',
         onOk: () => {
+          if (opts.isMounted && !opts.isMounted()) {
+            finish('ok');
+            return;
+          }
           state.hydrateFromExisting({
             id: client.id,
             phone: client.phone,
@@ -124,10 +138,15 @@ export async function runWizardDuplicateCheck(opts: {
         },
         afterClose: () => {
           if (settled) return;
+          if (opts.isMounted && !opts.isMounted()) {
+            finish('ok');
+            return;
+          }
           state.setCurrent(resolvePrevStep(state.current, state.clientType));
           finish('blocked');
         },
       });
+      releaseModal = opts.registerModal?.(modal) ?? (() => {});
     });
   } catch {
     return 'ok';
@@ -143,14 +162,28 @@ export function useDuplicateCheck(
   const isAppend = useClientWizardStore((s) => s.mode === 'APPEND');
   const mountedRef = useRef(true);
   const reqIdRef = useRef(0);
+  const modalsRef = useRef(new Set<ManagedModal>());
+  const invalidateDuplicateCheck = useCallback(() => {
+    reqIdRef.current += 1;
+    for (const modal of modalsRef.current) modal.destroy();
+    modalsRef.current.clear();
+  }, []);
+  const registerModal = useCallback<RegisterModal>((modal) => {
+    modalsRef.current.add(modal);
+    return () => {
+      modalsRef.current.delete(modal);
+    };
+  }, []);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      invalidateDuplicateCheck();
     };
-  }, []);
+  }, [invalidateDuplicateCheck]);
   const runDuplicateCheck = async (value: string): Promise<DuplicateCheckOutcome> => {
-    const reqId = ++reqIdRef.current;
+    invalidateDuplicateCheck();
+    const reqId = reqIdRef.current;
     const returnToStep = target === 'company' ? WIZARD_STEP.COMPANY : WIZARD_STEP.LEGAL_REP;
     const outcome = await runWizardDuplicateCheck({
       value,
@@ -158,11 +191,21 @@ export function useDuplicateCheck(
       target,
       form,
       returnToStepOnExitAppend: returnToStep,
-      isMounted: () => mountedRef.current && reqId === reqIdRef.current,
+      registerModal,
+      isMounted: () => {
+        const state = useClientWizardStore.getState();
+        const currentValue =
+          target === 'company' ? state.companyInfo.creditCode : state.legalRepInfo.idNumber;
+        return (
+          mountedRef.current &&
+          reqId === reqIdRef.current &&
+          normalizeIdentifier(currentValue ?? '') === normalizeIdentifier(value)
+        );
+      },
     });
     if (!mountedRef.current || reqId !== reqIdRef.current) return 'ok';
     return outcome;
   };
   // isAppend 仅供步骤文案/提示条使用，不再禁用唯一标识输入
-  return { runDuplicateCheck, isAppend };
+  return { runDuplicateCheck, invalidateDuplicateCheck, isAppend };
 }

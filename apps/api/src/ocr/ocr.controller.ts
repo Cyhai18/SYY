@@ -14,7 +14,7 @@ export class OcrController {
   constructor(private readonly ocrService: OcrService) {}
 
   @Post('business-license')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   async businessLicense(@UploadedFile() file?: UploadedFileLike) {
     if (!file) {
       throw new BadRequestException('请上传营业执照图片');
@@ -23,11 +23,14 @@ export class OcrController {
   }
 
   @Post('id-card')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
   async idCard(
     @UploadedFile() file: UploadedFileLike | undefined,
     @Query('side') side: 'front' | 'back' = 'front',
   ) {
+    if (side !== 'front' && side !== 'back') {
+      throw new BadRequestException('身份证图片面仅支持 front 或 back');
+    }
     if (!file) {
       throw new BadRequestException('请上传身份证图片');
     }

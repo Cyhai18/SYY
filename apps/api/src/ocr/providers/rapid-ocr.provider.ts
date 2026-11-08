@@ -12,7 +12,7 @@ type OcrDocType = 'business_license' | 'id_card_front' | 'id_card_back';
 
 /**
  * RapidOCR 微服务（services/ocr-service/app.py + parsers.py）约定的 JSON 响应结构。
- * 结构化字段提取（标签定位、正则校验、校验位算法）由微服务侧 `parsers.py` 完成，
+ * 结构化字段提取由微服务的证件专用字段提取模块完成，
  * Nest 侧只做字段名从 snake_case 到 camelCase 的映射，不重复实现规则。
  */
 interface RapidOcrServiceFields {
@@ -61,12 +61,7 @@ export class RapidOcrProvider implements OcrProvider {
       cityEn: raw.fields.city_en || undefined,
       postalCode: raw.fields.postal_code || undefined,
     };
-    // 必须识别出统一信用代码才算成功，不能只要微服务调用成功就判定 true：
-    // 营业执照的地址提取规则里标签包含"住址"（parsers.py `_BL_ADDR_LABELS`），与身份证正面的
-    // "住址"字段撞标签——如果用户把身份证误传到"上传营业执照"框，微服务调用不会报错，
-    // 会把身份证地址误判成公司地址提取出来，此时若仍返回 recognized:true，前端会直接
-    // setCompanyInfo(result.fields) 把这个错误地址写入公司信息表单，还提示"识别完成"。
-    // 要求 creditCode 非空才算识别成功，能同时挡住这种误传文档、以及信用代码本身没提出来的情况。
+    // recognized 只表示提取到了经校验的唯一标识，不代表全部字段完整。
     const recognized = Boolean(fields.creditCode);
     return { fields, rawText: raw.rawText, recognized };
   }
@@ -114,8 +109,10 @@ export class RapidOcrProvider implements OcrProvider {
       const response = await fetch(`${this.serviceUrl}/recognize`, {
         method: 'POST',
         body: form,
+        signal: AbortSignal.timeout(120_000),
       });
       if (!response.ok) {
+        await response.body?.cancel();
         this.logger.warn(`[OCR] RapidOCR 微服务返回 HTTP ${response.status}：${file.originalname}`);
         return null;
       }

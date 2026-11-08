@@ -3,9 +3,10 @@ import { Alert, Card, Col, Form, Input, Row, message } from 'antd';
 import type { FormInstance } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import { creditCodeFormRule, normalizeIdentifier } from '@funtax/shared';
-import { useClientWizardStore } from '../../../store/client-wizard-store';
+import { companyOcrValues, useClientWizardStore } from '../../../store/client-wizard-store';
 import { ocrApi } from '../../../lib/ocr-api';
 import { useDuplicateCheck } from '../hooks/useDuplicateCheck';
+import { useOcrRequest } from '../hooks/useOcrRequest';
 import { CertUploadPreview } from './CertUploadPreview';
 
 interface CompanyFormValues {
@@ -29,6 +30,7 @@ interface CompanyFormValues {
 export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> }) {
   const companyInfo = useClientWizardStore((s) => s.companyInfo);
   const setCompanyInfo = useClientWizardStore((s) => s.setCompanyInfo);
+  const replaceCompanyOcrFields = useClientWizardStore((s) => s.replaceCompanyOcrFields);
   const businessLicenseFile = useClientWizardStore((s) => s.businessLicenseFile);
   const setBusinessLicenseFile = useClientWizardStore((s) => s.setBusinessLicenseFile);
   const clearBusinessLicenseFile = useClientWizardStore((s) => s.clearBusinessLicenseFile);
@@ -43,16 +45,41 @@ export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> })
   const email = useClientWizardStore((s) => s.email);
   const setContact = useClientWizardStore((s) => s.setContact);
   const [recognizing, setRecognizing] = useState(false);
-  const { runDuplicateCheck, isAppend } = useDuplicateCheck('统一社会信用代码', 'company', form);
+  const { beginRequest, cancelRequest } = useOcrRequest();
+  const { runDuplicateCheck, invalidateDuplicateCheck, isAppend } = useDuplicateCheck(
+    '统一社会信用代码',
+    'company',
+    form,
+  );
+
+  const clearLicenseFields = () => {
+    invalidateDuplicateCheck();
+    const state = useClientWizardStore.getState();
+    if (state.mode === 'APPEND') state.exitAppendMode();
+    replaceCompanyOcrFields();
+    form.setFieldsValue(companyOcrValues());
+  };
+
+  const handleRemove = () => {
+    cancelRequest();
+    clearBusinessLicenseFile();
+    clearLicenseFields();
+    setRecognizing(false);
+  };
 
   const handleUpload = async (file: File) => {
+    const request = beginRequest();
+    clearLicenseFields();
     setBusinessLicenseFile(file);
     setRecognizing(true);
+    const isCurrent = () =>
+      request.isCurrent() && useClientWizardStore.getState().businessLicenseFile === file;
     try {
-      const result = await ocrApi.recognizeBusinessLicense(file);
+      const result = await ocrApi.recognizeBusinessLicense(file, request.signal);
+      if (!isCurrent()) return;
       if (result.recognized) {
-        setCompanyInfo(result.fields);
-        form.setFieldsValue(result.fields);
+        replaceCompanyOcrFields(result.fields);
+        form.setFieldsValue(companyOcrValues(result.fields));
         if (result.fields.creditCode) void runDuplicateCheck(result.fields.creditCode);
         void message.success('营业执照识别完成，已自动填充，请核对');
       } else {
@@ -60,10 +87,12 @@ export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> })
         void message.warning('未能自动识别，请手动填写以下字段');
       }
     } catch {
+      if (!isCurrent()) return;
       markOcrFailed();
       void message.error('识别服务暂不可用，请手动填写');
     } finally {
-      setRecognizing(false);
+      if (isCurrent()) setRecognizing(false);
+      request.finish();
     }
   };
 
@@ -116,7 +145,7 @@ export function StepCompany({ form }: { form: FormInstance<CompanyFormValues> })
           placeholderText="点击或拖拽上传营业执照（选填，可自动识别）"
           icon={<InboxOutlined />}
           onUpload={(file) => void handleUpload(file)}
-          onRemove={clearBusinessLicenseFile}
+          onRemove={handleRemove}
         />
       </div>
 
